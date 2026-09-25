@@ -1,0 +1,27 @@
+# Build backend used to install the package.
+[build-system]
+# Setuptools builds the package.
+requires = ["setuptools>=68"]
+# Setuptools' standard build entry point.
+build-backend = "setuptools.build_meta"
+
+# Package metadata and dependencies.
+[project]
+# Installable package name.
+name = "sourcing-agent"
+# Initial development version.
+version = "0.1.0"
+# One-line summary of the tool.
+description = "Sources a BOM from approved suppliers and returns a CBOM."
+# Minimum Python version (matches the local interpreter).
+requires-python = ">=3.12"
+# Runtime dependencies.
+dependencies = [
+    # Official Anthropic SDK for the Claude Messages API.
+    "anthropic",
+]
+
+# Tell setuptools where the package source lives.
+[tool.setuptools.packages.find]
+# Source code sits under src/.
+where = ["src"]

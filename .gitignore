@@ -1,0 +1,8 @@
+# Local virtual environment.
+.venv/
+# Python bytecode caches.
+__pycache__/
+# Editable-install build metadata.
+*.egg-info/
+# Local secrets such as ANTHROPIC_API_KEY.
+.env
