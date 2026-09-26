@@ -18,6 +18,8 @@ from ..core.agent import EFFORT, ESCALATION_MODEL, MAX_TURNS, MODEL, Usage
 from ..core.config import category_suppliers, load_suppliers
 # Worker failure type.
 from ..core.errors import WorkerError
+# Provider validation and client factory.
+from ..core.providers import create_client, provider_of, select_models, validate_mode
 # Live and batch runners.
 from ..core.runner import run_jobs
 # Per-conversation learning records.
@@ -67,6 +69,10 @@ class RunSummary:
     reused: int
     # True when the Batch API (50% off) was used.
     batch: bool
+    # First-pass model actually selected for this run.
+    model: str = MODEL
+    # Retry model actually selected for this run.
+    escalation_model: str = ESCALATION_MODEL
 
 
 def make_batches(rows: list[dict]) -> list[tuple[str, list[dict]]]:
@@ -94,12 +100,14 @@ def sourcing_settings(model: str, batch: bool) -> dict:
     # Everything that changes how many tokens a conversation uses.
     return {
         "model": model,
+        "provider": provider_of(model),
+        "web_adapter": "responses-v1" if provider_of(model) == "openai" else "messages",
         "batch": batch,
         "effort": EFFORT,
         "max_turns": MAX_TURNS,
         "rows_per_worker": ROWS_PER_WORKER,
         "searches_per_part": SEARCHES_PER_PART,
-        "page_tokens": MAX_PAGE_TOKENS,
+        "page_tokens": None if provider_of(model) == "openai" else MAX_PAGE_TOKENS,
         "prompt": prompt_hash(),
     }
 
@@ -145,6 +153,12 @@ async def source_rows(
         else conversation_record(job, "submitted", sum(bool(p.quotes) for p in outcomes[i]))
         for i, job in jobs
     ]
+    # Attach per-row supplier evidence to the conversation learning records.
+    for (i, job), conversation in zip(jobs, conversations):
+        # Approved suppliers and requested rows are recorded even for worker errors.
+        category, batch = batches[i]
+        # Normalize worker failures separately from unsuccessful searches.
+        conversation["supplier_outcomes"] = supplier_evidence(batch, outcomes[i], category_suppliers(category, config["suppliers"]))
     # Quotes and errors by part ID.
     parts: dict[str, PartQuotes] = {}
     errors: dict[str, str] = {}
@@ -158,6 +172,32 @@ async def source_rows(
         parts.update({part.part_id: part for part in outcome})
     # Results for every row, plus the conversation records.
     return parts, errors, conversations
+
+
+def supplier_evidence(rows: list[dict], outcome: list[PartQuotes] | str, suppliers: list[dict]) -> list[dict]:
+    """Record attempts, valid quotes, and wins without mistaking missing evidence for failure."""
+    # Results indexed by requested row.
+    parts = {} if isinstance(outcome, str) else {p.part_id: p for p in outcome}
+    # One learning observation per row and approved supplier.
+    observations = []
+    # Keep every requested row, including omitted submissions.
+    for row in rows:
+        # Missing parts have no proven searches.
+        part = parts.get(row["part_id"], PartQuotes(row["part_id"]))
+        # Price-rule winner at this run's BOM quantity.
+        winner = pick_lowest(part, int(row["quantity"]))
+        # Explicit search evidence from the parser.
+        reports = {o["supplier"]: o for o in part.supplier_outcomes}
+        # Record the actual supplier identity and domains used in this pass.
+        for supplier in suppliers:
+            # A worker error is distinct from a supplier search finding nothing.
+            report = reports.get(supplier["name"], {"status": "error" if isinstance(outcome, str) else "not_checked", "reason": outcome if isinstance(outcome, str) else "No search outcome reported"})
+            # Every validated quote counts, including quotes that lose on price.
+            quoted = any(q.vendor == supplier["name"] for q in part.quotes)
+            # Preserve evidence and the winner for later multi-run learning.
+            observations.append({"part_id": row["part_id"], "supplier": supplier["name"], "domains": sorted(supplier["domains"]), "status": "quoted" if quoted else report["status"], "reason": report["reason"], "won": bool(winner and winner.quote.vendor == supplier["name"])})
+    # Structured evidence is stored inside the normal run log.
+    return observations
 
 
 def cbom_row(row: dict, part: PartQuotes | None, error: str | None, currency: str) -> dict:
@@ -201,6 +241,8 @@ async def source_bom(
     max_age_days: int,
     live: bool,
     escalate: bool = True,
+    model: str = MODEL,
+    escalation_model: str = ESCALATION_MODEL,
 ) -> RunSummary:
     """Reuse cached quotes, source the rest, retry failed rows on the escalation model, and build the CBOM rows."""
     # First-pass usage.
@@ -222,7 +264,7 @@ async def source_bom(
     retry_convs: list[dict] = []
     # First pass on the default model.
     if todo:
-        fresh, errors, first_convs = await source_rows(client, todo, config, live, MODEL, usage)
+        fresh, errors, first_convs = await source_rows(client, todo, config, live, model, usage)
     # First-pass errors, before retries change them.
     first_errors = len(errors)
     # Escalation errors.
@@ -232,24 +274,24 @@ async def source_bom(
     # Retry them once on the escalation model.
     if retry:
         # Announce the retry.
-        log.info("retrying %d rows on %s", len(retry), ESCALATION_MODEL)
+        log.info("retrying %d rows on %s", len(retry), escalation_model)
         # Second pass.
-        retried, retry_errors, retry_convs = await source_rows(client, retry, config, live, ESCALATION_MODEL, escalation_usage)
+        retried, retry_errors, retry_convs = await source_rows(client, retry, config, live, escalation_model, escalation_usage)
         # Merge each retried row.
         for r in retry:
             # Part ID of the retried row.
             pid = r["part_id"]
             # The retry returned a result: it replaces the first pass.
             if pid in retried:
-                retried[pid].notes = "; ".join(filter(None, [f"retried on {ESCALATION_MODEL}", retried[pid].notes]))
+                retried[pid].notes = "; ".join(filter(None, [f"retried on {escalation_model}", retried[pid].notes]))
                 fresh[pid] = retried[pid]
                 errors.pop(pid, None)
             # The retry errored after a first-pass error: keep both messages.
             elif pid in errors:
-                errors[pid] = f"{errors[pid]}; {ESCALATION_MODEL} retry: {retry_errors[pid]}"
+                errors[pid] = f"{errors[pid]}; {escalation_model} retry: {retry_errors[pid]}"
             # The retry errored after a not-found: keep the first pass and note the error.
             else:
-                fresh[pid].notes = "; ".join(filter(None, [fresh[pid].notes, f"{ESCALATION_MODEL} retry: {retry_errors[pid]}"]))
+                fresh[pid].notes = "; ".join(filter(None, [fresh[pid].notes, f"{escalation_model} retry: {retry_errors[pid]}"]))
     # Date and cache each fresh result.
     for pid, part in fresh.items():
         part.quoted_at = today.isoformat()
@@ -262,7 +304,7 @@ async def source_bom(
     return RunSummary(
         cbom, usage, escalation_usage, len(retry),
         pass_shape(todo, config["suppliers"]), pass_shape(retry, config["suppliers"]), first_errors, len(retry_errors),
-        first_convs, retry_convs, config["currency"], reused, not live,
+        first_convs, retry_convs, config["currency"], reused, not live, model, escalation_model,
     )
 
 
@@ -274,8 +316,15 @@ async def run_sourcing(
     max_age_days: int = 7,
     live: bool = False,
     escalate: bool = True,
+    provider: str = "anthropic",
+    model: str | None = None,
+    escalation_model: str | None = None,
 ) -> RunSummary:
     """Load inputs, source the BOM, save the quote cache, and write the CBOM."""
+    # Resolve models and reject unsupported modes before creating a client.
+    model, escalation_model = select_models(provider, model, escalation_model)
+    # Never silently change the requested mode or cost.
+    validate_mode(provider, live)
     # Approved suppliers and categories.
     config = load_suppliers(suppliers_path)
     # Checked BOM rows.
@@ -283,10 +332,10 @@ async def run_sourcing(
     # Previously gathered quotes.
     cache = load_cache(cache_path)
     # One client shared by all workers.
-    async with anthropic.AsyncAnthropic() as client:
+    async with create_client(provider) as client:
         try:
             # Source every row.
-            summary = await source_bom(client, rows, config, cache, max_age_days, live, escalate)
+            summary = await source_bom(client, rows, config, cache, max_age_days, live, escalate, model, escalation_model)
         finally:
             # Keep whatever was quoted, even if the run stopped early.
             save_cache(cache_path, cache)

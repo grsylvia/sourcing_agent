@@ -9,6 +9,12 @@ from typing import Any
 
 # Async Claude client and API errors.
 import anthropic
+# OpenAI API error types and Responses loop.
+import openai
+# Provider-specific conversation implementation.
+from .openai_agent import run_live as run_openai_live
+# Provider routing and supported execution modes.
+from .providers import provider_of, validate_mode
 
 # Agent loop shared with every worker.
 from .agent import Job, Usage, handle_response, request_params, run_live
@@ -29,6 +35,10 @@ async def run_jobs(client: anthropic.AsyncAnthropic, jobs: list[Job], live: bool
     # Nothing to run.
     if not jobs:
         return []
+    # Validate all modes before any jobs submit requests.
+    for job in jobs:
+        # Reject unsupported OpenAI batch execution.
+        validate_mode(provider_of(job.model), live)
     # Pick the runner for the mode.
     return await (run_live_jobs(client, jobs, usage) if live else run_batch_jobs(client, jobs, usage))
 
@@ -44,11 +54,11 @@ async def run_live_jobs(client: anthropic.AsyncAnthropic, jobs: list[Job], usage
         async with gate:
             try:
                 # Run the conversation.
-                return await run_live(client, job, usage)
-            except anthropic.AuthenticationError:
+                return await (run_openai_live(client, job, usage) if provider_of(job.model) == "openai" else run_live(client, job, usage))
+            except (anthropic.AuthenticationError, openai.AuthenticationError):
                 # Bad credentials stop the whole run.
                 raise
-            except (WorkerError, anthropic.APIError) as e:
+            except (WorkerError, anthropic.APIError, openai.APIError) as e:
                 # Other failures mark only this job as errored.
                 return str(e)
 

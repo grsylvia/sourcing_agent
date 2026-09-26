@@ -25,8 +25,14 @@ SEARCH_PRICE = 10.00 / 1000
 # Batch API token discount.
 BATCH_DISCOUNT = 0.5
 
-# List rates as of 2026-09.
+# Standard short-context rates checked 2026-09-26 against both providers' pricing pages.
 PRICES = {
+    # OpenAI Responses models, including separate cache-write pricing.
+    "gpt-6-sol": Rates(input=2.00, output=10.00, cache_write=2.50, cache_read=0.20),
+    # Lower-cost OpenAI worker.
+    "gpt-6-luna": Rates(input=0.10, output=0.50, cache_write=0.125, cache_read=0.01),
+    # Stronger OpenAI retry model.
+    "gpt-6-astra": Rates(input=10.00, output=50.00, cache_write=12.50, cache_read=1.00),
     # Newest Opus.
     "claude-opus-5-5": Rates(input=4.00, output=20.00, cache_write=5.00, cache_read=0.20),
     # Previous Opus.

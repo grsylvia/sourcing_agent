@@ -8,7 +8,9 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 
 # Models, turn cap, and usage totals.
-from ..core.agent import ESCALATION_MODEL, MAX_TURNS, MODEL, Usage
+from ..core.agent import MAX_TURNS, Usage
+# Provider identity, selectable models, and defaults.
+from ..core.providers import MODELS, provider_of, select_models
 # Supplier list and per-category suppliers.
 from ..core.config import category_suppliers, load_suppliers
 # Cost model and shared token assumptions.
@@ -76,6 +78,12 @@ class Estimate:
     calibration: Fit | None
     # Where the token profile comes from.
     profile_note: str
+    # Selected first-pass model.
+    model: str
+    # Selected retry model.
+    escalation_model: str
+    # Comparable first-pass prices using one shared assumed workload.
+    comparison: dict[tuple[bool, str], Range]
 
 
 def conversation_usage(n_rows: int, n_suppliers: int, high: bool, profile: Profile) -> Usage:
@@ -125,16 +133,16 @@ def pass_range(shape: list[tuple[int, int]], model: str, batch: bool, profile: P
 
 def sourcing_estimator(records: list[dict]) -> Estimator:
     """Estimator that uses profiles learned from these records (per model, pooled, then assumed)."""
-    # Learned profiles.
-    profiles = learn_profiles(records)
-    # Price each pass with the most specific profile available.
-    return lambda shape, model, batch: pass_range(shape, model, batch, pick_profile(profiles, model, ASSUMED))
+    # Keep pooled token profiles within each provider.
+    profiles = {provider: learn_profiles([r for r in records if provider_of(r["model"]) == provider]) for provider in MODELS}
+    # Price each pass with its model or provider profile, then assumed constants.
+    return lambda shape, model, batch: pass_range(shape, model, batch, pick_profile(profiles[provider_of(model)], model, ASSUMED))
 
 
-def learned(log_path: Path) -> Learned:
+def learned(log_path: Path, provider: str = "anthropic") -> Learned:
     """Current learned state from the run log: estimator, calibration fit, and profile source."""
     # Every logged pass.
-    records = load_runs(log_path)
+    records = [r for r in load_runs(log_path) if provider_of(r["model"]) == provider]
     # Estimator with learned profiles.
     estimator = sourcing_estimator(records)
     # Pooled profile, if learned.
@@ -144,8 +152,10 @@ def learned(log_path: Path) -> Learned:
     return Learned(estimator, fit_records(records, estimator), note)
 
 
-def estimate_bom(bom_path: Path, suppliers_path: Path, cache_path: Path, max_age_days: int, log_path: Path) -> Estimate:
+def estimate_bom(bom_path: Path, suppliers_path: Path, cache_path: Path, max_age_days: int, log_path: Path, provider: str = "anthropic", model: str | None = None, escalation_model: str | None = None) -> Estimate:
     """Estimate the cost of sourcing a BOM in each mode, on each model."""
+    # Validate both models before loading files.
+    model, escalation_model = select_models(provider, model, escalation_model)
     # Approved suppliers and categories.
     config = load_suppliers(suppliers_path)
     # Checked BOM rows.
@@ -155,9 +165,11 @@ def estimate_bom(bom_path: Path, suppliers_path: Path, cache_path: Path, max_age
     # Worker conversations a run would start.
     shape = pass_shape(todo, config["suppliers"])
     # What learning knows so far.
-    state = learned(log_path)
+    state = learned(log_path, provider)
     # Cost per mode and model.
-    costs = {(batch, model): state.estimator(shape, model, batch) for batch in (True, False) for model in (MODEL, ESCALATION_MODEL)}
+    costs = {(batch, selected): state.estimator(shape, selected, batch) for batch in (True, False) if not batch or provider == "anthropic" for selected in (model, escalation_model)}
+    # Compare list prices on identical assumptions, without cross-provider calibration.
+    comparison = {(batch, selected): pass_range(shape, selected, batch) for family, models in MODELS.items() for selected in models for batch in (True, False) if not batch or family == "anthropic"}
     # Rows to source per category, in BOM order.
     counts: dict[str, int] = {}
     for r in todo:
@@ -165,7 +177,7 @@ def estimate_bom(bom_path: Path, suppliers_path: Path, cache_path: Path, max_age
     # Category breakdown with supplier counts.
     categories = [(c, n, len(category_suppliers(c, config["suppliers"]))) for c, n in counts.items()]
     # The estimate.
-    return Estimate(len(rows), len(cached), len(todo), len(shape), categories, costs, state.fit, state.profile_note)
+    return Estimate(len(rows), len(cached), len(todo), len(shape), categories, costs, state.fit, state.profile_note, model, escalation_model, comparison)
 
 
 def log_pass(log_path: Path, state: Learned, name: str, model: str, batch: bool, shape: list[tuple[int, int]], error_rows: int, usage: Usage, source: str, conversations: list[dict]) -> str | None:

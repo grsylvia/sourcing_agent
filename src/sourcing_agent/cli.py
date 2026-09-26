@@ -9,6 +9,8 @@ import sys
 
 # API error types.
 import anthropic
+# OpenAI credential errors.
+import openai
 
 # CBOM commands (run, estimate).
 from .cbom import commands as cbom_commands
@@ -43,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     except (InputError, OSError) as e:
         # Missing file, bad input, or a refused action.
         print(f"Input error: {e}", file=sys.stderr)
+        return 2
+    except openai.AuthenticationError:
+        # Key present but rejected by OpenAI.
+        print("OpenAI API key was rejected. Check OPENAI_API_KEY.", file=sys.stderr)
+        # Match the existing credential-error exit code.
         return 2
     except anthropic.AuthenticationError:
         # Key present but rejected.

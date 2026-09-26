@@ -13,3 +13,6 @@ CACHE_PATH = PROJECT_ROOT / "quote_cache.json"
 RUN_LOG_PATH = PROJECT_ROOT / "run_log.jsonl"
 # Discovered-supplier registry.
 REGISTRY_PATH = PROJECT_ROOT / "supplier_candidates.json"
+
+# Maintained discovery sources and outside-verification procedure.
+SUPPLIER_SOURCES_PATH = PROJECT_ROOT / "docs" / "SUPPLIER_SOURCES.md"

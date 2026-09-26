@@ -38,19 +38,23 @@ from .scout import Candidate, example_rows, gap_rows, known_domains, scout_estim
 from .screen import rdap_age_years, screen
 # Trials.
 from .trial import TRIAL_ROWS, compare_trial, run_trial, summarize_trial, trial_sample, trial_supplier
+# Supplier learning log.
+from ..learning.runlog import load_runs
 # Win rates.
-from .wins import MIN_ROWS_TO_DROP, supplier_wins
+from .wins import MIN_ROWS_TO_DROP, MIN_RUNS_TO_DROP, supplier_wins
 
 
 def register(commands) -> None:
     """Add the supplier subcommands to the CLI."""
     # The suppliers (win rates) subcommand.
-    sup = commands.add_parser("suppliers", help="Show supplier win rates per category from CBOMs and suppliers that never win.")
+    sup = commands.add_parser("suppliers", help="Show supplier win rates per category from CBOMs and consistently failing suppliers.")
     sup.set_defaults(handler=cmd_suppliers)
     # Finished CBOMs to count wins in.
     sup.add_argument("cboms", type=Path, nargs="+", help="One or more CBOM CSVs.")
     # Approved supplier list.
     sup.add_argument("--suppliers", type=Path, default=paths.DEFAULT_SUPPLIERS, help="Supplier TOML (default: project suppliers.toml).")
+    # Historical search evidence for pruning.
+    sup.add_argument("--log", type=Path, default=paths.RUN_LOG_PATH, help="Run log with supplier outcomes.")
     # The discover subcommand.
     dis = commands.add_parser("discover", help="Scout the web for new suppliers where CBOM rows went unsourced, and screen them for free.")
     dis.set_defaults(handler=cmd_discover)
@@ -93,22 +97,22 @@ def register(commands) -> None:
 
 
 def cmd_suppliers(args) -> int:
-    """Print supplier win rates per category and the suppliers that never win."""
+    """Print supplier win rates per category and repeated supplier search failures."""
     # Win counts for every supplier and category in suppliers.toml.
-    stats = supplier_wins(read_cboms(args.cboms), load_suppliers(args.suppliers)["suppliers"])
+    stats = supplier_wins(read_cboms(args.cboms), load_suppliers(args.suppliers)["suppliers"], load_runs(args.log))
     # Table of wins.
-    print(f"{'Category':<14}{'Supplier':<16}{'Wins':>5}{'Share':>7}{'Sourced rows':>14}")
+    print(f"{'Category':<14}{'Supplier':<16}{'Wins':>5}{'Share':>7}{'Sourced rows':>14}{'Failed runs':>13}")
     for s in stats:
         share = f"{s.wins / s.sourced:.0%}" if s.sourced else "-"
-        print(f"{s.category:<14}{s.supplier:<16}{s.wins:>5}{share:>7}{s.sourced:>14}")
-    # Suppliers that won nothing over enough rows.
+        print(f"{s.category:<14}{s.supplier:<16}{s.wins:>5}{share:>7}{s.sourced:>14}{s.failed_runs:>13}")
+    # Suppliers with enough consecutive, explicitly evidenced failing runs.
     drops = [s for s in stats if s.drop_candidate]
     if not drops:
-        print(f"\nNo drop candidates (a supplier needs 0 wins over at least {MIN_ROWS_TO_DROP} sourced rows in a category).")
+        print(f"\nNo drop candidates (requires {MIN_RUNS_TO_DROP} consecutive runs, each with at least {MIN_ROWS_TO_DROP} checked rows and no valid quotes; zero wins alone is insufficient).")
         return 0
-    print(f"\nDrop candidates (0 wins over at least {MIN_ROWS_TO_DROP} sourced rows):")
+    print(f"\nDrop candidates ({MIN_RUNS_TO_DROP}+ consecutive runs with no valid quotes on {MIN_ROWS_TO_DROP}+ checked rows each; user selection required):")
     for s in drops:
-        print(f"- {s.supplier} from {s.category} ({s.sourced} rows)")
+        print(f"- {s.supplier} from {s.category} ({s.failed_runs} consecutive failing runs)")
     print("Each drop saves about one search ($0.01) plus its result tokens per future row in that category.")
     print("Dropping changes that category's quote-cache key, so its cached quotes are re-sourced on the next run.")
     return 0
@@ -195,6 +199,26 @@ def print_candidates(candidates: list[Candidate]) -> None:
     print("\nWhy the scout proposed them:")
     for c in candidates:
         print(f"- {c.domain}: {c.reason}")
+        # Show third-party observations separately from the free screening verdict.
+        print_external_evidence(c.external_evidence, c.external_notes)
+
+
+def print_external_evidence(evidence: list[dict], notes: str = "") -> None:
+    """Show saved outside observations and their limits without claiming authentication."""
+    # Explicitly distinguish unknown evidence on older candidates.
+    if not evidence:
+        # No reviews is missing information, not proof of failure.
+        print("  Outside evidence: unverified (no usable observations recorded).")
+    # Preserve provenance and negative observations for the user's decision.
+    for item in evidence:
+        # Source dates and collection dates have different meanings.
+        print(f"  {item['source_type']} / {item['basis']} / {item['signal']}: {item['summary']}")
+        # Exact source URL supports later review and reuse.
+        print(f"    {item['url']} | published {item.get('published_at') or 'unknown'} | checked {item.get('checked_at') or 'unknown'}")
+    # Research limits are visible even when some evidence was found.
+    if notes:
+        # Explain skipped and blocked checks.
+        print(f"  Outside check limits: {notes}")
 
 
 async def run_trial_pass(sample: list[dict], supplier: dict, currency: str, live: bool, usage: Usage) -> tuple[dict, dict, list[dict]]:
@@ -283,4 +307,6 @@ def cmd_candidates(args) -> int:
         t = e.get("trial")
         trial_text = f"{t['quoted']}/{t['rows']} quoted, {t['fills']} gaps filled, {t['cheaper']} cheaper (${t['savings']:.2f})" if t else "-"
         print(f"{domain:<28}{e['name'][:24]:<26}{', '.join(e['categories'])[:20]:<22}{e['status']:<14}{trial_text}")
+        # Older registry entries remain readable without outside-evidence fields.
+        print_external_evidence(e.get("external_evidence", []), e.get("external_notes", ""))
     return 0

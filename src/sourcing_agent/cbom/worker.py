@@ -65,8 +65,20 @@ def build_submit_tool(vendor_names: list[str]) -> dict:
     part = {
         "type": "object",
         "additionalProperties": False,
-        "required": ["part_id", "quotes", "notes"],
+        "required": ["part_id", "quotes", "notes", "supplier_outcomes"],
         "properties": {
+            "supplier_outcomes": {
+                "type": "array",
+                "items": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["supplier", "status", "reason"],
+                    "properties": {
+                        "supplier": {"type": "string", "enum": vendor_names},
+                        "status": {"type": "string", "enum": ["quoted", "no_quote", "error", "not_checked"]},
+                        "reason": {"type": "string"},
+                    },
+                },
+            },
             "part_id": {"type": "string", "description": "The row's part_id exactly as given in the BOM rows."},
             "quotes": {"type": "array", "items": quote},
             "notes": {"type": "string", "description": "Why quotes are missing, or other caveats."},
@@ -103,6 +115,7 @@ For each BOM row:
 4. Record the vendor part number, product URL, units per pack, minimum order in packs, and every quantity price break (price per pack, {currency}, US storefront).
 5. Only report prices you saw on the supplier's page or search result. Skip listings with no visible price.
 6. Note any spec deviation in match_notes.
+7. Return one supplier_outcomes entry for every approved supplier per row: quoted for a valid quote, no_quote only after actually searching and finding no matching priced listing, error for access/tool failures, or not_checked if not searched. Include a short factual reason; never infer failure from losing on price.
 
 When done, call {SUBMIT_TOOL} once with every row, using each row's part_id exactly as given. Give rows with no valid listing an empty quotes list and a short reason in notes."""
 
@@ -183,6 +196,30 @@ def parse_submission(tool_input: dict, rows: list[dict], suppliers: list[dict]) 
         # Append rejection reasons to the notes.
         if rejected:
             result.notes = "; ".join(filter(None, [result.notes, "rejected: " + "; ".join(rejected)]))
+        # Normalize explicit search outcomes; missing or contradictory claims are unknown.
+        for supplier in suppliers:
+            # Valid quotes prove success even when the worker omitted its status.
+            name = supplier["name"]
+            # Require exactly one explicit report before counting an unsuccessful search.
+            reports = [o for o in part.get("supplier_outcomes", []) if o.get("supplier") == name]
+            # Default to unobserved rather than inventing a failure.
+            outcome = reports[0] if len(reports) == 1 else {}
+            # A rejected quote cannot count as a completed unsuccessful search.
+            attempted_quote = any(q["vendor"] == name for q in part["quotes"])
+            # Quotes that passed validation override any conflicting failure status.
+            valid_quote = any(q.vendor == name for q in result.quotes)
+            # Rejected quotes count as errors, never explicit unsuccessful searches.
+            status = "error" if attempted_quote else outcome.get("status", "not_checked")
+            # Validated quotes always prove supplier success.
+            if valid_quote:
+                # Keep higher-priced valid quotes as successes too.
+                status = "quoted"
+            # Unsubstantiated success or failure stays unknown.
+            if status not in ("quoted", "no_quote", "error", "not_checked") or (status == "quoted" and not valid_quote) or (status == "no_quote" and not outcome.get("reason", "").strip()):
+                # Missing evidence must not drive pruning.
+                status = "not_checked"
+            # Keep the normalized outcome with its reported reason.
+            result.supplier_outcomes.append({"supplier": name, "status": status, "reason": outcome.get("reason", "")})
         # Store the row's result.
         results[part["part_id"]] = result
     # Results in BOM order.

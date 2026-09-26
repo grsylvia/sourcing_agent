@@ -6,6 +6,8 @@ import datetime
 import hashlib
 # Log format.
 import json
+# Unique pass identity for deduplicating learning evidence.
+from uuid import uuid4
 # Usage to a dict.
 from dataclasses import asdict
 # File paths.
@@ -15,6 +17,8 @@ from pathlib import Path
 from ..core.agent import Job, Usage
 # Cost model.
 from ..core.pricing import Range, estimate_cost
+# Provider identity for cost attribution.
+from ..core.providers import provider_of
 
 
 def settings_id(settings: dict) -> str:
@@ -79,10 +83,12 @@ def record_pass(
     conversations = conversations or []
     # One log record per pass.
     append_run(path, {
+        "run_id": str(uuid4()),
         "date": datetime.date.today().isoformat(),
         "bom": source,
         "pass": name,
         "model": model,
+        "provider": provider_of(model),
         "batch": batch,
         "rows": sum(n for n, _ in shape),
         "shape": shape,
