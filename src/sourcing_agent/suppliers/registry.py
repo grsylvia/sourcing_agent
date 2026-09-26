@@ -9,6 +9,8 @@ from dataclasses import asdict
 # File paths.
 from pathlib import Path
 
+# Atomic local snapshots.
+from ..core.storage import write_json
 # Supplier list reader.
 from ..core.config import load_suppliers
 # Error for refused actions.
@@ -33,8 +35,8 @@ def load_registry(path: Path) -> dict:
 
 def save_registry(path: Path, registry: dict) -> None:
     """Write the candidate registry."""
-    # Readable JSON, sorted by domain.
-    path.write_text(json.dumps(dict(sorted(registry.items())), indent=1), encoding="utf-8")
+    # Preserve a complete previous registry until the new one is ready.
+    write_json(path, dict(sorted(registry.items())))
 
 
 def entry_for(registry: dict, domain: str) -> tuple[str, dict]:

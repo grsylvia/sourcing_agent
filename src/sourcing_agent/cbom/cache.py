@@ -11,6 +11,9 @@ from dataclasses import asdict
 # File paths.
 from pathlib import Path
 
+# Atomic local snapshots.
+from ..core.storage import write_json
+
 # Quote records.
 from .quotes import PartQuotes, PriceBreak, Quote
 
@@ -40,8 +43,8 @@ def load_cache(path: Path) -> dict:
 
 def save_cache(path: Path, cache: dict) -> None:
     """Write the cache file."""
-    # Readable JSON, one run's worth at a time.
-    path.write_text(json.dumps(cache, indent=1))
+    # Keep the previous cache intact if serialization fails.
+    write_json(path, cache)
 
 
 def lookup(cache: dict, key: str, max_age_days: int, today: datetime.date) -> PartQuotes | None:

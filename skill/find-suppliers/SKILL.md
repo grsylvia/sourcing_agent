@@ -11,7 +11,7 @@ Runs `<repo>` discovery (Claude Messages API). Scouts and trials spend API credi
 | --- | --- |
 | Credentials | `ANTHROPIC_API_KEY` for paid scouts and trials |
 | Input | One or more CBOM CSVs (their `not_found` / `error` rows pick the categories) |
-| Registry | `<repo>/supplier_candidates.json` (never edit by hand) |
+| Registry | Personal profile `supplier_candidates.json` (never edit by hand) |
 
 ## Startup and memory
 

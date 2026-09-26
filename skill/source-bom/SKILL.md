@@ -5,11 +5,11 @@ description: Initialize personal sourcing preferences and review default sources
 
 # Source a BOM
 
-Runs `<repo>` (Claude Messages API). Setup and estimates are offline; fresh sourcing spends API credits, while cache-only runs do not.
+Runs `<repo>` (Anthropic Messages or OpenAI Responses API). Setup and estimates are offline; fresh sourcing spends API credits, while cache-only runs do not.
 
 | Need | Detail |
 | --- | --- |
-| Credentials | `ANTHROPIC_API_KEY` set in the environment |
+| Credentials | `ANTHROPIC_API_KEY` for Anthropic or `OPENAI_API_KEY` for OpenAI |
 | BOM format | `.xlsx` or CSV per `<repo>/docs/FORMATS.md` |
 | BOM template | `<repo>/templates/bom_template.xlsx` (fill the `BOM` sheet) |
 | Suppliers | `<repo>/suppliers.toml` |
@@ -21,30 +21,35 @@ Follow [PERSONAL_SETUP.md](../../docs/PERSONAL_SETUP.md) before sourcing or when
 ## Steps
 
 1. **Check the BOM.** A filled-in `bom_template.xlsx` (or any `.xlsx` with a `BOM` sheet in the FORMATS.md columns) runs as-is. Use the saved BOM-input folder for bare filenames and the saved template folder for a new template; never overwrite a filled template. If the file is not in the FORMATS.md columns, offer to convert it into a new file (never overwrite the original). Categories must match `suppliers.toml`.
-2. **Estimate.** Run `sourcing estimate <bom>` (free, no API calls). If it prints a `Calibrated from logged runs` block, that figure (fitted to past actual costs) is the best estimate; the ranges are the uncalibrated bounds.
-3. **Ask the critical questions** in one AskUserQuestion call (plain questions if the tool is unavailable). Put the estimate figures in the options, leading with the calibrated figure when there is one:
+2. **Estimate.** Run `sourcing estimate <bom> --compare` (free, no API calls). Show the provider comparison: identical assumed workload, including searches, not a measured quality benchmark. Use calibration only for the provider it names.
+3. **Ask provider and model first**, using AskUserQuestion (plain questions if unavailable). Offer Anthropic / Sonnet 5 (default), OpenAI / GPT-6 Sol, and OpenAI / GPT-6 Luna, with their estimated costs from step 2. Also accept any supported model shown by `estimate --compare`, including Opus 5.5 and GPT-6 Astra. Respect choices already supplied by the user.
+
+   Re-run the free estimate with `--provider <anthropic|openai> --model <model>`. Then ask the remaining questions together, using the selected provider's estimates:
 
    | Question | Options | Flag |
    | --- | --- | --- |
-   | Run mode? | Batch (Recommended): Sonnet range, under 1 h (up to 24 h) · Live: Sonnet range, minutes | Live → `--live` |
-   | Retry failed rows on Opus 5.5? | Allow (Recommended): + per-row range, only rows Sonnet cannot source · Skip | Skip → `--no-escalate` |
+   | Run mode? | Anthropic: batch (default, up to 24 h) or live (minutes), with ranges · OpenAI: live only; state this without offering batch | Live → `--live` |
+   | Retry failed rows? | Allow: Anthropic → Opus 5.5; OpenAI → GPT-6 Astra, with per-row range · Skip · Selected retry model | Skip → `--no-escalate`; custom → `--escalation-model <model>` |
    | Quote freshness? (only if cached rows > 0) | Reuse quotes up to 7 days old (free) · Re-source everything | Re-source → `--max-age 0`, then re-run step 2 |
    | CBOM location? | Saved CBOM folder (default) · Explicit path | `--out <chosen-folder>/<bom>_cbom.csv` |
+
+   Re-estimate after any model, retry-model, or freshness change. Verify the selected provider's credential only when rows need fresh sourcing; never display its value.
 
 4. **Confirm the run.** Show a summary, then ask "Run now?" (Run / Cancel). Run only on explicit confirmation. On Cancel, stop; on changed options, update the estimate and summary before confirming again.
 
    | Item | Value |
    | --- | --- |
    | BOM | Path, rows (new / cached) |
+   | Provider / model | Selected provider, first-pass model, required credential variable |
    | Mode | Batch or live, expected time |
-   | Opus 5.5 retries | Allowed or skipped |
+   | Retries | Allowed or skipped, selected retry model |
    | Estimated cost | Calibrated figure (if any) and range for the chosen options |
    | Output | CBOM path |
 
 5. **Run** in the background with the chosen flags:
 
    ```
-   sourcing run <bom.xlsx|bom.csv> --out <cbom.csv> [--live] [--no-escalate] [--max-age 0]
+   sourcing run <bom.xlsx|bom.csv> --out <cbom.csv> --provider <provider> --model <model> [--escalation-model <model>] [--live] [--no-escalate] [--max-age 0]
    ```
 
 6. **Report** from the CLI summary:
@@ -54,7 +59,7 @@ Follow [PERSONAL_SETUP.md](../../docs/PERSONAL_SETUP.md) before sourcing or when
 | CBOM path | `CBOM:` line |
 | Sourced / not found / errors / reused | `Rows:` line |
 | Parts total (no shipping) | `Parts total:` line |
-| Rows retried on Opus 5.5 | `Usage (claude-opus-5-5, …)` line |
+| Retried rows | `Usage (<selected retry model>, …)` line |
 | Run cost vs estimate | `Actual vs estimate` lines (per model: actual, assumed range, calibrated figure) |
 | Calibration | Pass logged to `run_log.jsonl`; the next estimate refits on it |
 | Learning | `sourcing learn` (free): relay its recommendations |

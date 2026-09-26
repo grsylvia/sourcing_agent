@@ -16,7 +16,7 @@ from sourcing_agent.core.agent import Usage
 # Cost bounds for logging.
 from sourcing_agent.core.pricing import Range
 # Fresh sourcing pipeline.
-from sourcing_agent.cbom.pipeline import source_rows
+from sourcing_agent.cbom.execution import source_rows
 # Submission parsing and tool schema.
 from sourcing_agent.cbom.worker import build_submit_tool, parse_submission
 # Persistent learning records.
@@ -128,7 +128,7 @@ class SupplierLearningTests(unittest.TestCase):
             # Return each batch via the real submission parser.
             return [job.parse({"parts": [{"part_id": row["part_id"], "quotes": [], "notes": "none", "supplier_outcomes": [{"supplier": "Vendor", "status": "no_quote", "reason": "No matching priced listing"}]} for row in rows]}) for job in jobs]
         # Run the normal source_rows path with mocked API execution.
-        with patch("sourcing_agent.cbom.pipeline.run_jobs", fake_jobs):
+        with patch("sourcing_agent.cbom.execution.run_jobs", fake_jobs):
             # Collect the same conversations the CLI logs.
             parts, errors, conversations = asyncio.run(source_rows(None, rows, config, True, "claude-sonnet-5", usage))
         # All five outcomes survive batching.

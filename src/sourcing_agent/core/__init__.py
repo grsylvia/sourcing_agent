@@ -1,1 +1,1 @@
-"""Shared engine: errors, paths, supplier config, domain helpers, agent loop, runners, API pricing."""
+"""Shared provider engine, pricing, configuration, paths, and local storage primitives."""

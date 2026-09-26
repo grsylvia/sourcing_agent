@@ -8,7 +8,7 @@ from ..core.agent import MODEL, Usage
 # BOM columns the sourcing worker expects.
 from ..cbom.bom import BOM_COLUMNS
 # Sourcing pass shared with CBOM generation.
-from ..cbom.pipeline import source_rows
+from ..cbom.execution import source_rows
 # Quote records and the price rule.
 from ..cbom.quotes import PartQuotes, pick_lowest
 
