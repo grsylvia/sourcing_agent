@@ -12,10 +12,13 @@ Takes a BOM, sources each category from approved suppliers, and returns a CBOM (
 | Vendor selection | Workers return quotes; code picks the lowest price |
 | Interface | CLI, run by Claude through a Claude Code skill |
 | Price rule | Lowest total at BOM qty (price breaks, pack size, MOQ); shipping excluded |
-| Formats | BOM CSV, `suppliers.toml`, CBOM CSV ([docs/FORMATS.md](docs/FORMATS.md)) |
+| Formats | BOM CSV or .xlsx (template in `templates/`), `suppliers.toml`, CBOM CSV ([docs/FORMATS.md](docs/FORMATS.md)) |
 | Model | `claude-sonnet-5`, effort `medium`; no refusal fallback (not on Batch API) |
+| Escalation | Rows Sonnet leaves `not_found` / `error` retried once on `claude-opus-5-5` (same mode); `--no-escalate` skips |
 | Token use | 2 rows per worker, 15K-token page cap, prompt caching, usage + cost per run |
 | Run mode | Batch API by default (50% off); `--live` for full-price fast runs |
+| Run gate | Skill asks mode, Opus retries, quote freshness, output path (with estimates), then a final Run / Cancel confirmation |
+| Cost estimate | `sourcing estimate` before each run: rows, cache hits, suppliers per category, mode, model; no API calls |
 | Quote reuse | `quote_cache.json`, rows reused up to `--max-age` days (default 7); keyed by part + suppliers, not quantity |
 
 # Project resources

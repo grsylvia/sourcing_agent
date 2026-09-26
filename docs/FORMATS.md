@@ -74,6 +74,6 @@ All BOM columns, then:
 | `currency` | `USD` |
 | `quotes_compared` | `4` |
 | `quoted_at` | `2026-09-25` (original date when reused from cache) |
-| `sourcing_notes` | Spec match notes, not-found reason, or error |
+| `sourcing_notes` | Spec match notes, not-found reason, or error; `retried on claude-opus-5-5` when escalated |
 
 Example values are illustrative, not real quotes.

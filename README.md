@@ -19,8 +19,9 @@ BOM ──▶ split by category ──▶ worker per category (parallel) ──�
 ## Usage
 
 ```
-sourcing run examples/bom.csv --out cbom.csv
-sourcing run my_bom.xlsx --out cbom.csv
+sourcing estimate my_bom.xlsx            # price batch vs live first (no API calls)
+sourcing run my_bom.xlsx --out cbom.csv  # batch (default)
+sourcing run my_bom.xlsx --live          # live
 ```
 
 | BOM input | Detail |
@@ -33,26 +34,41 @@ sourcing run my_bom.xlsx --out cbom.csv
 | *(default)* | Batch API: 50% off tokens; usually under 1 h, max 24 h |
 | `--live` | Full price, results in minutes |
 | `--max-age DAYS` | Reuse cached quotes up to this age (default 7; `0` = re-source all) |
+| `--no-escalate` | Skip the Opus 5.5 retry of rows Sonnet cannot source |
 
 | Output | Detail |
 | --- | --- |
 | `cbom.csv` | BOM + vendor + pricing ([docs/FORMATS.md](docs/FORMATS.md)) |
 | `quote_cache.json` | Reused quotes (local, gitignored) |
-| Summary | Rows by status, cache reuse, parts total, tokens, estimated API cost |
+| Summary | Rows by status, cache reuse, parts total, tokens and cost per model |
 | Exit code | `0` ok · `1` some rows errored · `2` bad input or credentials |
 
 In Claude Code: `/source-bom` (linked from `skill/source-bom/` into `~/.claude/skills/`).
 
 ## Estimated cost
 
-Sonnet 5 · medium, list prices, first run (cache empty); not yet measured live.
+```
+sourcing run ──▶ claude-sonnet-5 (all new rows) ──▶ not_found / error rows ──▶ claude-opus-5-5 retry (once)
+```
 
-| Mode | Per row | Example (6 rows) | Arctos (75 rows) |
+`sourcing estimate <bom>` prices a run before it starts. List prices, effort `medium`, assumed token sizes (not yet measured live).
+
+| Factor | Effect |
+| --- | --- |
+| New rows | Main driver; cached rows cost $0 |
+| Suppliers per category | 1 search ($0.01) per supplier per row, up to 6 |
+| Page fetches, turns | Low case none / 1; high case 1 per supplier / 6 |
+| Mode | Batch halves token cost (search fees unchanged) |
+| Opus retries | Only failed rows; ~1.4–1.7× Sonnet per row |
+
+Example BOM (6 rows, cache empty):
+
+| Mode | Sonnet 5 pass | Opus 5.5 retry / row | Range (no retries → all retried) |
 | --- | --- | --- | --- |
-| **Batch (default)** | $0.08–0.29 | $0.50–1.77 | $6–22 |
-| Live | $0.13–0.53 | $0.77–3.18 | $10–40 |
+| **Batch (default)** | $0.46–1.28 | $0.11–0.34 | $0.46–3.33 |
+| Live | $0.66–2.20 | $0.17–0.62 | $0.66–5.94 |
 
-Rows reused from the cache cost $0. Opus 5.5 is ~1.8× these figures.
+Arctos-size BOM (75 rows), Sonnet pass: ~$6–16 batch, ~$8–28 live.
 
 ## Status
 
@@ -65,4 +81,5 @@ Rows reused from the cache cost $0. Opus 5.5 is ~1.8× these figures.
 | CLI | ✅ `src/sourcing_agent/cli.py` |
 | Claude Code skill | ✅ `skill/source-bom/SKILL.md` |
 | Excel BOM input + template | ✅ `templates/bom_template.xlsx` |
+| Cost estimate + Opus 5.5 escalation | ✅ `src/sourcing_agent/estimate.py` |
 | Live run | ⏳ needs `ANTHROPIC_API_KEY` |

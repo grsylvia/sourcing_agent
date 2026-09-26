@@ -17,27 +17,45 @@ Runs `~/sourcing_agent` (Claude Messages API). Each run spends API credits.
 ## Steps
 
 1. **Check the BOM.** A filled-in `bom_template.xlsx` (or any `.xlsx` with a `BOM` sheet in the FORMATS.md columns) runs as-is. If the user has no BOM, copy the template for them to fill (Windows: into OneDrive Documents). If the file is not in the FORMATS.md columns, offer to convert it into a new file (never overwrite the original). Categories must match `suppliers.toml`.
-2. **Confirm cost.** Tell the user the row count and estimate (~$0.08–0.29 per new row in batch mode, ~$0.13–0.53 with `--live`; cached rows are free), then wait for a go-ahead.
-3. **Run** in the background (batch mode usually takes under 1 h, up to 24 h):
+2. **Estimate.** Run `~/sourcing_agent/.venv/bin/sourcing estimate <bom>` (free, no API calls).
+3. **Ask the critical questions** in one AskUserQuestion call (plain questions if the tool is unavailable). Put the estimate figures in the options:
+
+   | Question | Options | Flag |
+   | --- | --- | --- |
+   | Run mode? | Batch (Recommended): Sonnet range, under 1 h (up to 24 h) · Live: Sonnet range, minutes | Live → `--live` |
+   | Retry failed rows on Opus 5.5? | Allow (Recommended): + per-row range, only rows Sonnet cannot source · Skip | Skip → `--no-escalate` |
+   | Quote freshness? (only if cached rows > 0) | Reuse quotes up to 7 days old (free) · Re-source everything | Re-source → `--max-age 0`, then re-run step 2 |
+   | CBOM location? | OneDrive Documents (Windows) · Next to the BOM | OneDrive → `--out /mnt/c/Users/grsga/OneDrive/Documents/<bom>_cbom.csv` |
+
+4. **Confirm the run.** Show a summary, then ask "Run now?" (Run / Cancel). Run only on an explicit Run; on Cancel or any change, go back to step 3.
+
+   | Item | Value |
+   | --- | --- |
+   | BOM | Path, rows (new / cached) |
+   | Mode | Batch or live, expected time |
+   | Opus 5.5 retries | Allowed or skipped |
+   | Estimated cost | Range for the chosen options |
+   | Output | CBOM path |
+
+5. **Run** in the background with the chosen flags:
 
    ```
-   ~/sourcing_agent/.venv/bin/sourcing run <bom.xlsx|bom.csv> --out <cbom.csv>
+   ~/sourcing_agent/.venv/bin/sourcing run <bom.xlsx|bom.csv> --out <cbom.csv> [--live] [--no-escalate] [--max-age 0]
    ```
 
-   Add `--live` only if the user needs results fast (full price). Add `--max-age 0` to force fresh quotes.
-
-   For a Windows export, set `--out` under `/mnt/c/Users/grsga/OneDrive/Documents/`.
-4. **Report** from the CLI summary:
+6. **Report** from the CLI summary:
 
 | Report | Source |
 | --- | --- |
 | CBOM path | `CBOM:` line |
 | Sourced / not found / errors / reused | `Rows:` line |
 | Parts total (no shipping) | `Parts total:` line |
-| Run cost | `Estimated API cost:` line |
+| Rows retried on Opus 5.5 | `Usage (claude-opus-5-5, …)` line |
+| Run cost vs estimate | `Estimated API cost` line (per model) vs step 2 range |
 | Rows to review | `not_found` / `error` rows and their `sourcing_notes` |
 
 ## Rules
 
+- Never start `sourcing run` without the step 4 confirmation, even if the user asked to source the BOM.
 - Never edit prices in the CBOM by hand; re-run rows instead.
 - Exit code 2 means bad input or credentials; show the message and stop.

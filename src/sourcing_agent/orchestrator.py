@@ -31,7 +31,7 @@ from .batch import run_jobs
 # Quote cache helpers.
 from .cache import load_cache, lookup, quote_key, save_cache, store
 # Worker API and records.
-from .worker import PartQuotes, PriceBreak, Quote, Usage, WorkerError, new_job, source_category
+from .worker import ESCALATION_MODEL, MODEL, PartQuotes, PriceBreak, Quote, Usage, WorkerError, new_job, source_category
 
 # BOM rows per worker conversation; small batches stop pages being re-read.
 ROWS_PER_WORKER = 2
@@ -79,8 +79,12 @@ class Pick:
 class RunSummary:
     # CBOM rows written.
     rows: list[dict]
-    # Token and tool usage across all workers.
+    # Token and tool usage of the first pass.
     usage: Usage
+    # Token and tool usage of the escalation retries.
+    escalation_usage: Usage
+    # Rows retried on the escalation model.
+    escalated: int
     # Currency of every price.
     currency: str
     # Rows answered from the quote cache.
@@ -260,7 +264,7 @@ def cbom_row(row: dict, part: PartQuotes | None, error: str | None, currency: st
     }
 
 
-async def _run_live(client: anthropic.AsyncAnthropic, batches: list[tuple[str, list[dict]]], config: dict, usage: Usage) -> list[list[PartQuotes] | str]:
+async def _run_live(client: anthropic.AsyncAnthropic, batches: list[tuple[str, list[dict]]], config: dict, usage: Usage, model: str) -> list[list[PartQuotes] | str]:
     """Live mode: stream each batch's conversation, a few at a time."""
     # Limit concurrent worker conversations.
     gate = asyncio.Semaphore(MAX_PARALLEL)
@@ -271,7 +275,7 @@ async def _run_live(client: anthropic.AsyncAnthropic, batches: list[tuple[str, l
         async with gate:
             try:
                 # Run the worker.
-                return await source_category(client, category, batch, config["suppliers"], config["currency"], usage)
+                return await source_category(client, category, batch, config["suppliers"], config["currency"], usage, model)
             except anthropic.AuthenticationError:
                 # Bad credentials stop the whole run.
                 raise
@@ -283,7 +287,7 @@ async def _run_live(client: anthropic.AsyncAnthropic, batches: list[tuple[str, l
     return await asyncio.gather(*(run_one(c, b) for c, b in batches))
 
 
-async def _run_batch(client: anthropic.AsyncAnthropic, batches: list[tuple[str, list[dict]]], config: dict, usage: Usage) -> list[list[PartQuotes] | str]:
+async def _run_batch(client: anthropic.AsyncAnthropic, batches: list[tuple[str, list[dict]]], config: dict, usage: Usage, model: str) -> list[list[PartQuotes] | str]:
     """Batch mode: build one job per batch and run them through the Batch API."""
     # Result slot per batch.
     outcomes: list[list[PartQuotes] | str] = [""] * len(batches)
@@ -293,7 +297,7 @@ async def _run_batch(client: anthropic.AsyncAnthropic, batches: list[tuple[str, 
     for i, (category, batch) in enumerate(batches):
         try:
             # Tools and first message for this batch.
-            jobs.append((i, new_job(category, batch, config["suppliers"], config["currency"])))
+            jobs.append((i, new_job(category, batch, config["suppliers"], config["currency"], model)))
         except WorkerError as e:
             # No suppliers for the category.
             outcomes[i] = str(e)
@@ -308,6 +312,47 @@ async def _run_batch(client: anthropic.AsyncAnthropic, batches: list[tuple[str, 
     return outcomes
 
 
+def split_cached(rows: list[dict], config: dict, cache: dict, max_age_days: int, today: datetime.date) -> tuple[dict[str, PartQuotes], list[dict], dict[str, str]]:
+    """Return reusable cached quotes by part ID, the rows still to source, and each row's cache key."""
+    # Cache key per part ID.
+    keys = {r["part_id"]: quote_key(r, config["suppliers"]) for r in rows}
+    # Quotes reused from the cache.
+    cached = {r["part_id"]: hit for r in rows if (hit := lookup(cache, keys[r["part_id"]], max_age_days, today))}
+    # Rows the cache does not answer.
+    return cached, [r for r in rows if r["part_id"] not in cached], keys
+
+
+async def _source_rows(
+    client: anthropic.AsyncAnthropic,
+    rows: list[dict],
+    config: dict,
+    live: bool,
+    model: str,
+    usage: Usage,
+) -> tuple[dict[str, PartQuotes], dict[str, str]]:
+    """Source rows on one model; return quotes and error messages by part ID."""
+    # Worker-sized batches by category.
+    batches = make_batches(rows)
+    # Pick the runner for the mode.
+    runner = _run_live if live else _run_batch
+    # One outcome per batch.
+    outcomes = await runner(client, batches, config, usage, model)
+    # Quotes and errors by part ID.
+    parts: dict[str, PartQuotes] = {}
+    errors: dict[str, str] = {}
+    # Sort outcomes into quotes and errors.
+    for (category, batch), outcome in zip(batches, outcomes):
+        # A string outcome is an error for every row in the batch.
+        if isinstance(outcome, str):
+            log.warning("%s %s [%s]: error: %s", model, category, ", ".join(r["part_id"] for r in batch), outcome)
+            errors.update({r["part_id"]: outcome for r in batch})
+            continue
+        # Quotes for each row in the batch.
+        parts.update({part.part_id: part for part in outcome})
+    # Results for every row.
+    return parts, errors
+
+
 async def source_bom(
     client: anthropic.AsyncAnthropic,
     rows: list[dict],
@@ -315,46 +360,60 @@ async def source_bom(
     cache: dict,
     max_age_days: int,
     live: bool,
+    escalate: bool = True,
 ) -> RunSummary:
-    """Reuse cached quotes, source the remaining rows, and build the CBOM rows."""
-    # Usage shared by all workers.
+    """Reuse cached quotes, source the rest, retry failed rows on the escalation model, and build the CBOM rows."""
+    # First-pass usage.
     usage = Usage()
+    # Escalation usage, priced at the escalation model's rates.
+    escalation_usage = Usage()
     # Today's date for cache ages and new quotes.
     today = datetime.date.today()
-    # Cache key per part ID.
-    keys = {r["part_id"]: quote_key(r, config["suppliers"]) for r in rows}
-    # Quotes reused from the cache.
-    parts = {r["part_id"]: hit for r in rows if (hit := lookup(cache, keys[r["part_id"]], max_age_days, today))}
+    # Cached quotes, rows to source, and cache keys.
+    parts, todo, keys = split_cached(rows, config, cache, max_age_days, today)
     # Number of rows answered from the cache.
     reused = len(parts)
     # Log the reuse count.
     log.info("reusing cached quotes for %d of %d rows", reused, len(rows))
-    # Batches for rows that still need sourcing.
-    batches = make_batches([r for r in rows if r["part_id"] not in parts])
-    # Error message per part ID.
+    # Fresh quotes and errors from this run.
+    fresh: dict[str, PartQuotes] = {}
     errors: dict[str, str] = {}
-    # Source the remaining rows.
-    if batches:
-        # Pick the runner for the mode.
-        runner = _run_live if live else _run_batch
-        # One outcome per batch.
-        outcomes = await runner(client, batches, config, usage)
-        # Sort outcomes into quotes and errors.
-        for (category, batch), outcome in zip(batches, outcomes):
-            # A string outcome is an error for every row in the batch.
-            if isinstance(outcome, str):
-                log.warning("%s [%s]: error: %s", category, ", ".join(r["part_id"] for r in batch), outcome)
-                errors.update({r["part_id"]: outcome for r in batch})
-                continue
-            # Date and cache each fresh result.
-            for part in outcome:
-                part.quoted_at = today.isoformat()
-                parts[part.part_id] = part
-                store(cache, keys[part.part_id], part)
+    # First pass on the default model.
+    if todo:
+        fresh, errors = await _source_rows(client, todo, config, live, MODEL, usage)
+    # Rows the first model errored on or found no quotes for.
+    retry = [r for r in todo if r["part_id"] in errors or not fresh[r["part_id"]].quotes] if escalate else []
+    # Retry them once on the escalation model.
+    if retry:
+        # Announce the retry.
+        log.info("retrying %d rows on %s", len(retry), ESCALATION_MODEL)
+        # Second pass.
+        retried, retry_errors = await _source_rows(client, retry, config, live, ESCALATION_MODEL, escalation_usage)
+        # Merge each retried row.
+        for r in retry:
+            # Part ID of the retried row.
+            pid = r["part_id"]
+            # The retry returned a result: it replaces the first pass.
+            if pid in retried:
+                retried[pid].notes = "; ".join(filter(None, [f"retried on {ESCALATION_MODEL}", retried[pid].notes]))
+                fresh[pid] = retried[pid]
+                errors.pop(pid, None)
+            # The retry errored after a first-pass error: keep both messages.
+            elif pid in errors:
+                errors[pid] = f"{errors[pid]}; {ESCALATION_MODEL} retry: {retry_errors[pid]}"
+            # The retry errored after a not-found: keep the first pass and note the error.
+            else:
+                fresh[pid].notes = "; ".join(filter(None, [fresh[pid].notes, f"{ESCALATION_MODEL} retry: {retry_errors[pid]}"]))
+    # Date and cache each fresh result.
+    for pid, part in fresh.items():
+        part.quoted_at = today.isoformat()
+        store(cache, keys[pid], part)
+    # All results by part ID.
+    parts.update(fresh)
     # CBOM rows in BOM order.
     cbom = [cbom_row(r, parts.get(r["part_id"]), errors.get(r["part_id"]), config["currency"]) for r in rows]
     # Rows, usage, and run facts.
-    return RunSummary(cbom, usage, config["currency"], reused, not live)
+    return RunSummary(cbom, usage, escalation_usage, len(retry), config["currency"], reused, not live)
 
 
 def write_cbom(path: Path, rows: list[dict]) -> None:
@@ -375,6 +434,7 @@ async def run_sourcing(
     cache_path: Path,
     max_age_days: int = 7,
     live: bool = False,
+    escalate: bool = True,
 ) -> RunSummary:
     """Load inputs, source the BOM, save the quote cache, and write the CBOM."""
     # Approved suppliers and categories.
@@ -387,7 +447,7 @@ async def run_sourcing(
     async with anthropic.AsyncAnthropic() as client:
         try:
             # Source every row.
-            summary = await source_bom(client, rows, config, cache, max_age_days, live)
+            summary = await source_bom(client, rows, config, cache, max_age_days, live, escalate)
         finally:
             # Keep whatever was quoted, even if the run stopped early.
             save_cache(cache_path, cache)

@@ -14,6 +14,8 @@ import anthropic
 
 # Model that runs each worker.
 MODEL = "claude-sonnet-5"
+# Stronger model that retries rows the first model could not source.
+ESCALATION_MODEL = "claude-opus-5-5"
 # Thinking depth.
 EFFORT = "medium"
 # Output cap per request, with room for thinking.
@@ -139,6 +141,8 @@ class Job:
     messages: list[dict]
     # Requests answered so far.
     turns: int = 0
+    # Model that runs this conversation.
+    model: str = MODEL
 
 
 def category_suppliers(category: str, suppliers: list[dict]) -> list[dict]:
@@ -302,7 +306,7 @@ def parse_submission(tool_input: dict, rows: list[dict], suppliers: list[dict]) 
     return [results[r["part_id"]] for r in rows]
 
 
-def new_job(category: str, rows: list[dict], suppliers: list[dict], currency: str) -> Job:
+def new_job(category: str, rows: list[dict], suppliers: list[dict], currency: str, model: str = MODEL) -> Job:
     """Set up the tools and first message for one worker conversation."""
     # Suppliers searched for this category.
     approved = category_suppliers(category, suppliers)
@@ -331,14 +335,14 @@ def new_job(category: str, rows: list[dict], suppliers: list[dict], currency: st
     # Conversation starts with the batch task.
     first = {"role": "user", "content": build_prompt(category, rows, approved, currency)}
     # The ready-to-send job.
-    return Job(category, rows, approved, [web_search, web_fetch, submit], [first])
+    return Job(category, rows, approved, [web_search, web_fetch, submit], [first], model=model)
 
 
 def request_params(job: Job) -> dict:
     """Return the Messages API parameters for the job's next request."""
     # Same shape for live and batch requests.
     return {
-        "model": MODEL,
+        "model": job.model,
         "max_tokens": MAX_TOKENS,
         "system": SYSTEM_PROMPT,
         "thinking": {"type": "adaptive"},
@@ -359,8 +363,8 @@ def handle_response(job: Job, response, usage: Usage) -> list[PartQuotes] | None
     u = response.usage
     # Log this request's usage.
     log.info(
-        "%s [%s]: %s | in %d, cache write %d, cache read %d, out %d",
-        job.category, ", ".join(r["part_id"] for r in job.rows), response.stop_reason,
+        "%s %s [%s]: %s | in %d, cache write %d, cache read %d, out %d",
+        job.model, job.category, ", ".join(r["part_id"] for r in job.rows), response.stop_reason,
         u.input_tokens or 0, u.cache_creation_input_tokens or 0, u.cache_read_input_tokens or 0, u.output_tokens or 0,
     )
     # A refusal ends the job.
@@ -393,12 +397,13 @@ async def source_category(
     suppliers: list[dict],
     currency: str = "USD",
     usage: Usage | None = None,
+    model: str = MODEL,
 ) -> list[PartQuotes]:
     """Live mode: run one worker conversation to completion and return validated quotes."""
     # Local totals when the caller does not pass an accumulator.
     usage = usage if usage is not None else Usage()
     # Conversation state.
-    job = new_job(category, rows, suppliers, currency)
+    job = new_job(category, rows, suppliers, currency, model)
     # Loop until the worker submits (handle_response raises when out of turns).
     while True:
         # One streamed Messages API request.
