@@ -1,23 +1,27 @@
 ---
 name: source-bom
-description: Price a BOM from approved suppliers and produce a CBOM (BOM + vendor + pricing) with the sourcing agent CLI. Use when the user asks to source, price, quote, or cost a BOM, or to make a CBOM.
+description: Initialize personal sourcing preferences and review default sources, or price a BOM from approved suppliers and produce a CBOM. Use for sourcing setup, personal sourcing memory, pricing, quoting, or costing a BOM.
 ---
 
 # Source a BOM
 
-Runs `~/sourcing_agent` (Claude Messages API). Each run spends API credits.
+Runs `<repo>` (Claude Messages API). Setup and estimates are offline; fresh sourcing spends API credits, while cache-only runs do not.
 
 | Need | Detail |
 | --- | --- |
 | Credentials | `ANTHROPIC_API_KEY` set in the environment |
-| BOM format | `.xlsx` or CSV per `~/sourcing_agent/docs/FORMATS.md` |
-| BOM template | `~/sourcing_agent/templates/bom_template.xlsx` (fill the `BOM` sheet) |
-| Suppliers | `~/sourcing_agent/suppliers.toml` |
+| BOM format | `.xlsx` or CSV per `<repo>/docs/FORMATS.md` |
+| BOM template | `<repo>/templates/bom_template.xlsx` (fill the `BOM` sheet) |
+| Suppliers | `<repo>/suppliers.toml` |
+
+## Startup and memory
+
+Follow [PERSONAL_SETUP.md](../../docs/PERSONAL_SETUP.md) before sourcing or when asked to initialize personal memory or review defaults. It defines folder initialization, explicit source review, and the boundary between personal preferences and shared rules. For a setup-only request, finish after startup; do not begin sourcing.
 
 ## Steps
 
-1. **Check the BOM.** A filled-in `bom_template.xlsx` (or any `.xlsx` with a `BOM` sheet in the FORMATS.md columns) runs as-is. If the user has no BOM, copy the template for them to fill (Windows: into OneDrive Documents). If the file is not in the FORMATS.md columns, offer to convert it into a new file (never overwrite the original). Categories must match `suppliers.toml`.
-2. **Estimate.** Run `~/sourcing_agent/.venv/bin/sourcing estimate <bom>` (free, no API calls). If it prints a `Calibrated from logged runs` block, that figure (fitted to past actual costs) is the best estimate; the ranges are the uncalibrated bounds.
+1. **Check the BOM.** A filled-in `bom_template.xlsx` (or any `.xlsx` with a `BOM` sheet in the FORMATS.md columns) runs as-is. Use the saved BOM-input folder for bare filenames and the saved template folder for a new template; never overwrite a filled template. If the file is not in the FORMATS.md columns, offer to convert it into a new file (never overwrite the original). Categories must match `suppliers.toml`.
+2. **Estimate.** Run `sourcing estimate <bom>` (free, no API calls). If it prints a `Calibrated from logged runs` block, that figure (fitted to past actual costs) is the best estimate; the ranges are the uncalibrated bounds.
 3. **Ask the critical questions** in one AskUserQuestion call (plain questions if the tool is unavailable). Put the estimate figures in the options, leading with the calibrated figure when there is one:
 
    | Question | Options | Flag |
@@ -25,9 +29,9 @@ Runs `~/sourcing_agent` (Claude Messages API). Each run spends API credits.
    | Run mode? | Batch (Recommended): Sonnet range, under 1 h (up to 24 h) · Live: Sonnet range, minutes | Live → `--live` |
    | Retry failed rows on Opus 5.5? | Allow (Recommended): + per-row range, only rows Sonnet cannot source · Skip | Skip → `--no-escalate` |
    | Quote freshness? (only if cached rows > 0) | Reuse quotes up to 7 days old (free) · Re-source everything | Re-source → `--max-age 0`, then re-run step 2 |
-   | CBOM location? | OneDrive Documents (Windows) · Next to the BOM | OneDrive → `--out /mnt/c/Users/grsga/OneDrive/Documents/<bom>_cbom.csv` |
+   | CBOM location? | Saved CBOM folder (default) · Explicit path | `--out <chosen-folder>/<bom>_cbom.csv` |
 
-4. **Confirm the run.** Show a summary, then ask "Run now?" (Run / Cancel). Run only on an explicit Run; on Cancel or any change, go back to step 3.
+4. **Confirm the run.** Show a summary, then ask "Run now?" (Run / Cancel). Run only on explicit confirmation. On Cancel, stop; on changed options, update the estimate and summary before confirming again.
 
    | Item | Value |
    | --- | --- |
@@ -40,7 +44,7 @@ Runs `~/sourcing_agent` (Claude Messages API). Each run spends API credits.
 5. **Run** in the background with the chosen flags:
 
    ```
-   ~/sourcing_agent/.venv/bin/sourcing run <bom.xlsx|bom.csv> --out <cbom.csv> [--live] [--no-escalate] [--max-age 0]
+   sourcing run <bom.xlsx|bom.csv> --out <cbom.csv> [--live] [--no-escalate] [--max-age 0]
    ```
 
 6. **Report** from the CLI summary:
@@ -56,7 +60,7 @@ Runs `~/sourcing_agent` (Claude Messages API). Each run spends API credits.
 | Learning | `sourcing learn` (free): relay its recommendations |
 | Rows to review | `not_found` / `error` rows and their `sourcing_notes` |
 
-7. **Prune suppliers.** Run `~/sourcing_agent/.venv/bin/sourcing suppliers <cbom.csv> [older CBOMs…]` (free). If it lists drop candidates, ask in one AskUserQuestion call (multiSelect) which to drop, noting that each saves ~1 search per future row and re-sources that category's cached quotes. For each chosen drop, remove the category from that supplier's `categories` in `~/sourcing_agent/suppliers.toml`; drop the whole `[[suppliers]]` entry only if no categories remain. If rows came back `not_found`, offer `/find-suppliers` for those categories.
+7. **Prune suppliers.** Run `sourcing suppliers <cbom.csv> [older CBOMs…]` (free). Only consider candidates backed by the learning log: at least three consecutive first-pass runs with five or more explicitly checked rows each and no valid quotes. Zero wins alone is never a failure; valid losing quotes reset the streak, and errors, unchecked rows, or smaller samples break it. Historical CBOMs alone cannot justify drops. If it lists drop candidates, ask in one AskUserQuestion call (multiSelect) which to drop, noting that each saves ~1 search per future row and re-sources that category's cached quotes. For each chosen drop, remove the category from that supplier's `categories` in `<repo>/suppliers.toml`; drop the whole `[[suppliers]]` entry only if no categories remain. If rows came back `not_found`, offer `/find-suppliers` for those categories.
 
 ## Rules
 

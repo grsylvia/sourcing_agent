@@ -20,6 +20,10 @@ from .core.errors import InputError
 from .learning import commands as learning_commands
 # Supplier commands (suppliers, discover, trial, candidates).
 from .suppliers import commands as supplier_commands
+# Offline personal preferences and startup.
+from .personal import commands as personal_commands
+# Safe outcomes live separately from user preferences.
+from .personal.store import record_event
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,20 +35,32 @@ def main(argv: list[str] | None = None) -> int:
     cbom_commands.register(commands)
     supplier_commands.register(commands)
     learning_commands.register(commands, sourcing_estimator, ASSUMED)
+    # Register free personal setup commands.
+    personal_commands.register(commands)
     # Parse the command line.
     args = parser.parse_args(argv)
     # Warnings only from other libraries, on stderr.
     logging.basicConfig(level=logging.WARNING, format="%(message)s", stream=sys.stderr)
     # Progress lines from this package.
     logging.getLogger("sourcing_agent").setLevel(logging.INFO)
+    # Retain unexpected failures without storing exception text.
+    outcome = "unexpected_error"
     try:
         # Run the command.
-        return args.handler(args)
+        result = args.handler(args)
+        # Preserve unsuccessful row outcomes in the local event history.
+        outcome = "success" if result == 0 else "row_errors"
+        # Return the command's original exit code.
+        return result
     except (InputError, OSError) as e:
+        # Record only the failure class, without paths or credentials.
+        outcome = "input_error"
         # Missing file, bad input, or a refused action.
         print(f"Input error: {e}", file=sys.stderr)
         return 2
     except anthropic.AuthenticationError:
+        # Keep credential values out of the outcome log.
+        outcome = "authentication_error"
         # Key present but rejected.
         print("Anthropic API key was rejected. Check ANTHROPIC_API_KEY.", file=sys.stderr)
         return 2
@@ -52,8 +68,22 @@ def main(argv: list[str] | None = None) -> int:
         # No credentials found at all.
         if "authentication" not in str(e):
             raise
+        # Retain the credential failure category only.
+        outcome = "authentication_error"
         print("No Anthropic credentials found. Set ANTHROPIC_API_KEY.", file=sys.stderr)
         return 2
+    # Outcome retention is shared code behavior, never a user preference.
+    finally:
+        # Inspection and setup do not add noise to operational history.
+        if args.command not in ("memory", "startup"):
+            # A logging failure must not replace the command's result.
+            try:
+                # Persist safe fixed labels only.
+                record_event(args.command, outcome)
+            # Read-only or full storage should leave the result usable.
+            except OSError:
+                # Disclose that the outcome was not retained.
+                print("Could not save the command outcome.", file=sys.stderr)
 
 
 # Allow python -m sourcing_agent.cli.

@@ -127,13 +127,13 @@ def recommendations(records: list[dict], groups: list[dict], meters: dict[str, f
     rereads = [c["rereads"] for c in categories]
     reread_text = f" (median ≈{percentile(rereads, 50):.0f}× per conversation)" if rereads else ""
     if share.get("cache_read", 0) >= SHARE_THRESHOLDS["cache_read"]:
-        tips.append(f"Context re-reads are {share['cache_read']:.0%} of spend{reread_text}: cut steps per conversation (effort low, fewer suppliers in heavy categories, or a fetch cap).")
+        tips.append(f"Context re-reads are {share['cache_read']:.0%} of spend{reread_text}: cut steps per conversation (effort low, review consistently failing suppliers in heavy categories, or a fetch cap).")
     if share.get("output", 0) >= SHARE_THRESHOLDS["output"]:
         tips.append(f"Output and thinking are {share['output']:.0%} of spend: trial effort low on a few rows.")
     if share.get("input", 0) >= SHARE_THRESHOLDS["input"]:
         tips.append(f"Uncached input is {share['input']:.0%} of spend: check the shared cache prefix is being read.")
     if share.get("searches", 0) >= SHARE_THRESHOLDS["searches"]:
-        tips.append(f"Search fees are {share['searches']:.0%} of spend: drop suppliers that never win (sourcing suppliers <cbom>).")
+        tips.append(f"Search fees are {share['searches']:.0%} of spend: review repeated search failures (sourcing suppliers <cbom>); zero wins alone never justifies a drop.")
     # Batch mode.
     saved = batch_savings(records)
     if saved > 0.005:

@@ -1,5 +1,7 @@
 # Supplier discovery
 
+[Outside verification sources and search order](SUPPLIER_SOURCES.md) — loaded into every scout prompt; outside evidence is saved with each candidate.
+
 ```
 CBOM not_found rows ──▶ discover (scout per category) ──▶ free screen ──▶ trial (real rows) ──▶ you approve ──▶ suppliers.toml
                               open web, blocked:                 evidence, HTTPS,     candidate's domain                     │
@@ -23,9 +25,10 @@ CBOM not_found rows ──▶ discover (scout per category) ──▶ free scree
 | 1. Usability | Price breaks or pack sizes shown | In scout | Flag |
 | 2. Trust | Domain age via RDAP (<1 y blocks, <2 y flags) | Free | ✅ / Flag |
 | 2. Trust | Contact and returns pages on its domain | In scout | Flag |
+| 2. Outside evidence | Forum + business review, authorization when claimed; dated links and supporting/adverse findings | Within scout caps | Flag incomplete checks or concerns; no automatic rejection |
 | 3. **Trial** | Quote coverage, gaps filled, cheaper vs CBOM on real rows | ~$0.1–0.6 | You decide |
 | 4. Approval | Human picks; `--approve` requires a trial (unless `--without-trial`) | Free | ✅ |
-| 5. Ongoing | Win rate per category (`sourcing suppliers`); prune if it never wins | Free | You decide |
+| 5. Ongoing | Explicit search outcomes (`sourcing suppliers`); recommend drops only after ≥3 consecutive failing runs with ≥5 checked rows each | Free | You decide |
 
 Scout claims are unverified; the trial is the real test (the normal sourcing worker must find and price parts there). Web content is treated as data; nothing a scout returns reaches `suppliers.toml` without your approval.
 
@@ -34,7 +37,7 @@ Scout claims are unverified; the trial is the real test (the normal sourcing wor
 | Lever | Setting |
 | --- | --- |
 | Demand-driven | Only categories with `not_found` / `error` rows (or `--category`) |
-| One scout per category, not per part | ≤3 example parts per scout |
+| One scout per category, not per part | ≤3 example parts per scout; prioritize outside checks on the strongest 1–2 candidates |
 | Caps | 8 searches, 6 fetches, 5K-token pages per scout |
 | No wasted results | `blocked_domains` = approved + already reviewed + non-stores (≤64) |
 | Never pay twice | Registry (`supplier_candidates.json`) skips every reviewed domain |

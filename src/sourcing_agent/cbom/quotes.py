@@ -47,6 +47,8 @@ class PartQuotes:
     notes: str = ""
     # Date the quotes were gathered (ISO format).
     quoted_at: str = ""
+    # Explicit per-supplier search outcomes for learning; absent in older cached quotes.
+    supplier_outcomes: list[dict] = field(default_factory=list)
 
 
 # The cheapest way to order one quote at the BOM quantity.

@@ -6,6 +6,8 @@ import datetime
 import hashlib
 # Log format.
 import json
+# Unique pass identity for deduplicating learning evidence.
+from uuid import uuid4
 # Usage to a dict.
 from dataclasses import asdict
 # File paths.
@@ -79,6 +81,7 @@ def record_pass(
     conversations = conversations or []
     # One log record per pass.
     append_run(path, {
+        "run_id": str(uuid4()),
         "date": datetime.date.today().isoformat(),
         "bom": source,
         "pass": name,

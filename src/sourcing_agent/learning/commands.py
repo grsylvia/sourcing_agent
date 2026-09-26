@@ -14,6 +14,9 @@ from .profile import POOLED, Profile, learn_profiles
 # Fit description.
 from .regression import describe_fit
 # Report sections.
+# Supplier reliability from the same learning log.
+from .suppliers import supplier_history
+# Cost and efficiency reporting.
 from .report import by_category, conversation_costs, efficiency, meter_totals, outliers, recommendations
 # Run log.
 from .runlog import load_runs
@@ -62,6 +65,18 @@ def cmd_learn(args, make_estimator: Callable[[list[dict]], Estimator], assumed: 
     print_calibration(records, make_estimator)
     print_outliers(worst)
     print_settings(records)
+    # Surface supplier evidence alongside token and cost learning.
+    print("\nSupplier outcomes (all passes; failure streaks use first passes only):")
+    # Missing historical evidence is unknown, never failure.
+    history = supplier_history(records)
+    # Show why older data cannot justify pruning.
+    if not history:
+        # Historical CBOM winners cannot reveal unsuccessful supplier searches.
+        print("No explicit supplier outcomes logged yet; no evidence for drops.")
+    # Keep the supplier identity visible when domains change.
+    for (category, supplier, domains), stats in sorted(history.items()):
+        # Display successes, unsuccessful searches, and unknown/error outcomes separately.
+        print(f"- {category} / {supplier} ({', '.join(domains)}): {stats['quoted']} quoted, {stats['wins']} wins, {stats['no_quote']} no quote, {stats['error']} errors, {stats['not_checked']} unchecked; {stats['failed_runs']} consecutive failing runs; {'review drop' if stats['drop_candidate'] else 'keep'}")
     # What to change next.
     print("\nRecommendations:")
     for tip in recommendations(records, groups, meters, categories, worst):

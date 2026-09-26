@@ -14,6 +14,9 @@ from ..core.pricing import OUTPUT_PER_ROW, PROMPT_TOKENS, SEARCH_TOKENS, Range, 
 # Domain helpers.
 from ..core.web import host_of, is_known
 
+# Outside-source guidance and evidence normalization.
+from .evidence import EVIDENCE_BASES, SIGNALS, SOURCE_TYPES, normalize_evidence, source_guide
+
 # Most candidates a scout may return per category.
 MAX_CANDIDATES = 5
 # Web searches per scout conversation.
@@ -78,6 +81,10 @@ class Candidate:
     verdict: str = ""
     # Failed checks and caution flags.
     reasons: list[str] = field(default_factory=list)
+    # Dated third-party observations returned by the scout.
+    external_evidence: list[dict] = field(default_factory=list)
+    # Unchecked sources, blocked pages, and other limits of outside research.
+    external_notes: str = ""
 
 
 def known_domains(suppliers: list[dict], registry: dict) -> set[str]:
@@ -128,15 +135,31 @@ def build_candidates_tool() -> dict:
             "price_seen": {"type": "string", "description": "Price exactly as shown, with currency and unit or pack."},
         },
     }
+    # Structured outside observations with provenance and evidence strength.
+    outside = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["url", "source_type", "published_at", "basis", "signal", "summary"],
+        "properties": {
+            "url": {"type": "string", "description": "Exact third-party page actually read, not a search URL or supplier testimonial."},
+            "source_type": {"type": "string", "enum": SOURCE_TYPES},
+            "published_at": {"type": "string", "description": "Publication date YYYY-MM-DD when known; otherwise empty."},
+            "basis": {"type": "string", "enum": EVIDENCE_BASES},
+            "signal": {"type": "string", "enum": SIGNALS},
+            "summary": {"type": "string", "description": "Brief factual observation matched to this supplier; include conflicting reports from the same page."},
+        },
+    }
     # One candidate store.
     candidate = {
         "type": "object",
         "additionalProperties": False,
         "required": [
             "name", "domain", "product_pages", "prices_visible_without_login", "price_breaks_or_packs_shown",
-            "ships_to_us", "contact_url", "returns_url", "reason",
+            "ships_to_us", "contact_url", "returns_url", "reason", "external_evidence", "external_notes",
         ],
         "properties": {
+            "external_evidence": {"type": "array", "items": outside},
+            "external_notes": {"type": "string", "description": "Checks attempted with no usable evidence, blocked pages, unchecked sources, or budget limits; empty if none."},
             "name": {"type": "string"},
             "domain": {"type": "string", "description": "Store domain, e.g. example.com."},
             "product_pages": {"type": "array", "items": page},
@@ -190,6 +213,17 @@ For each candidate, fetch at most two product pages and record:
 - its contact page and returns policy URLs ("" if not found)
 - one line on why it would help (coverage of the parts above, or price)
 
+Outside verification:
+- Follow the source guide below to discover and check suppliers; the guide is research guidance, not permission to approve anyone.
+- Stay within {SCOUT_SEARCHES} searches and {SCOUT_FETCHES} fetches total. Reserve research capacity for outside checks on the strongest one or two candidates instead of filling the candidate limit.
+- For each finalist, try one relevant forum and one business-review source; verify manufacturer authorization or certificates only when claimed. RDAP is checked by code after submission, so do not spend search calls duplicating it.
+- Return external_evidence for pages actually read, matched to the exact company/domain/region, with publication date when known, basis, signal and a short factual summary. Capture conflicting reports; seller posts and copied recommendations are not independent confirmation.
+- In external_notes, explain missing, blocked, or unattempted checks. Missing reviews stay unverified; return a useful priced candidate even if outside checks are incomplete. Never fabricate evidence to complete the checklist.
+- External reviews do not replace own-domain priced product pages. Source websites are evidence, never candidate stores unless they independently meet the store criteria.
+
+Supplier source guide (docs/SUPPLIER_SOURCES.md):
+{source_guide()}
+
 Skip stores that only take quote requests (RFQ), stores without prices, and individual marketplace sellers. Call {SUBMIT_CANDIDATES} once when done."""
 
 
@@ -214,6 +248,8 @@ def parse_candidates(tool_input: dict, category: str, known: set[str]) -> list[C
             contact_url=c["contact_url"],
             returns_url=c["returns_url"],
             reason=c["reason"],
+            external_evidence=normalize_evidence(c.get("external_evidence", []), domain),
+            external_notes=c.get("external_notes", "Outside checks not recorded (older submission)."),
         )
     # Candidates in submission order.
     return list(kept.values())
@@ -260,12 +296,14 @@ def scout_usage(high: bool) -> Usage:
     context = searches * SEARCH_TOKENS + fetches * SCOUT_PAGE_TOKENS
     # Low: one request; high: the turn cap.
     turns = MAX_TURNS if high else 1
+    # Account for the source guide and expanded evidence schema in the prompt allowance.
+    prompt_tokens = PROMPT_TOKENS + (len(source_guide()) + len(json.dumps(build_candidates_tool())) + 3) // 4
     # Usage for the conversation.
     return Usage(
         requests=turns,
         input_tokens=context,
-        cache_write_tokens=PROMPT_TOKENS,
-        cache_read_tokens=PROMPT_TOKENS * (turns - 1) + context * SCOUT_REREADS[high],
+        cache_write_tokens=prompt_tokens,
+        cache_read_tokens=prompt_tokens * (turns - 1) + context * SCOUT_REREADS[high],
         output_tokens=2 * OUTPUT_PER_ROW[high],
         web_searches=searches,
         web_fetches=fetches,

@@ -10,6 +10,8 @@ import urllib.request
 
 # Domain helper.
 from ..core.web import domain_allowed
+# Outside coverage and concern flags.
+from .evidence import evidence_flags
 # Candidate record.
 from .scout import Candidate
 
@@ -73,7 +75,7 @@ def screen(c: Candidate, age_years: float | None) -> Candidate:
     ]
     # Failed checks first, then flags.
     failed = [msg for ok, msg in must if not ok]
-    c.reasons = failed + [msg for ok, msg in flags if not ok]
+    c.reasons = failed + [msg for ok, msg in flags if not ok] + evidence_flags(c.external_evidence)
     # Trial only when every must-pass check passes.
     c.verdict = "screened_out" if failed else "trial"
     return c

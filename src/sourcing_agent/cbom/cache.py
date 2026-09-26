@@ -65,3 +65,13 @@ def store(cache: dict, key: str, part: PartQuotes) -> None:
     # Only successful rows are worth reusing.
     if part.quotes:
         cache[key] = asdict(part)
+
+
+def store_parts(cache: dict, keys: dict[str, str], parts: dict[str, PartQuotes], today: datetime.date) -> None:
+    """Date completed results and retain their successful quotes immediately."""
+    # Empty results remain uncached so later runs can retry them.
+    for pid, part in parts.items():
+        # Use the sourcing run's date consistently across passes.
+        part.quoted_at = today.isoformat()
+        # Reuse the cache's successful-quotes-only policy.
+        store(cache, keys[pid], part)

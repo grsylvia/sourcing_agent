@@ -25,7 +25,7 @@ from ..learning.runlog import conversation_record
 # BOM and CBOM files.
 from .bom import CBOM_COLUMNS, load_bom, write_cbom
 # Quote cache helpers.
-from .cache import load_cache, lookup, quote_key, save_cache, store
+from .cache import load_cache, lookup, quote_key, save_cache, store_parts
 # Quote records and the price rule.
 from .quotes import PartQuotes, pick_lowest
 # Sourcing worker jobs and the settings they run with.
@@ -145,6 +145,12 @@ async def source_rows(
         else conversation_record(job, "submitted", sum(bool(p.quotes) for p in outcomes[i]))
         for i, job in jobs
     ]
+    # Attach per-row supplier evidence to the conversation learning records.
+    for (i, job), conversation in zip(jobs, conversations):
+        # Approved suppliers and requested rows are recorded even for worker errors.
+        category, batch = batches[i]
+        # Normalize worker failures separately from unsuccessful searches.
+        conversation["supplier_outcomes"] = supplier_evidence(batch, outcomes[i], category_suppliers(category, config["suppliers"]))
     # Quotes and errors by part ID.
     parts: dict[str, PartQuotes] = {}
     errors: dict[str, str] = {}
@@ -158,6 +164,32 @@ async def source_rows(
         parts.update({part.part_id: part for part in outcome})
     # Results for every row, plus the conversation records.
     return parts, errors, conversations
+
+
+def supplier_evidence(rows: list[dict], outcome: list[PartQuotes] | str, suppliers: list[dict]) -> list[dict]:
+    """Record attempts, valid quotes, and wins without mistaking missing evidence for failure."""
+    # Results indexed by requested row.
+    parts = {} if isinstance(outcome, str) else {p.part_id: p for p in outcome}
+    # One learning observation per row and approved supplier.
+    observations = []
+    # Keep every requested row, including omitted submissions.
+    for row in rows:
+        # Missing parts have no proven searches.
+        part = parts.get(row["part_id"], PartQuotes(row["part_id"]))
+        # Price-rule winner at this run's BOM quantity.
+        winner = pick_lowest(part, int(row["quantity"]))
+        # Explicit search evidence from the parser.
+        reports = {o["supplier"]: o for o in part.supplier_outcomes}
+        # Record the actual supplier identity and domains used in this pass.
+        for supplier in suppliers:
+            # A worker error is distinct from a supplier search finding nothing.
+            report = reports.get(supplier["name"], {"status": "error" if isinstance(outcome, str) else "not_checked", "reason": outcome if isinstance(outcome, str) else "No search outcome reported"})
+            # Every validated quote counts, including quotes that lose on price.
+            quoted = any(q.vendor == supplier["name"] for q in part.quotes)
+            # Preserve evidence and the winner for later multi-run learning.
+            observations.append({"part_id": row["part_id"], "supplier": supplier["name"], "domains": sorted(supplier["domains"]), "status": "quoted" if quoted else report["status"], "reason": report["reason"], "won": bool(winner and winner.quote.vendor == supplier["name"])})
+    # Structured evidence is stored inside the normal run log.
+    return observations
 
 
 def cbom_row(row: dict, part: PartQuotes | None, error: str | None, currency: str) -> dict:
@@ -223,6 +255,8 @@ async def source_bom(
     # First pass on the default model.
     if todo:
         fresh, errors, first_convs = await source_rows(client, todo, config, live, MODEL, usage)
+        # Retain completed prices before retries or learning writes can fail.
+        store_parts(cache, keys, fresh, today)
     # First-pass errors, before retries change them.
     first_errors = len(errors)
     # Escalation errors.
@@ -235,6 +269,8 @@ async def source_bom(
         log.info("retrying %d rows on %s", len(retry), ESCALATION_MODEL)
         # Second pass.
         retried, retry_errors, retry_convs = await source_rows(client, retry, config, live, ESCALATION_MODEL, escalation_usage)
+        # Preserve valid retry prices before subsequent persistence steps.
+        store_parts(cache, keys, retried, today)
         # Merge each retried row.
         for r in retry:
             # Part ID of the retried row.
@@ -251,9 +287,7 @@ async def source_bom(
             else:
                 fresh[pid].notes = "; ".join(filter(None, [fresh[pid].notes, f"{ESCALATION_MODEL} retry: {retry_errors[pid]}"]))
     # Date and cache each fresh result.
-    for pid, part in fresh.items():
-        part.quoted_at = today.isoformat()
-        store(cache, keys[pid], part)
+    store_parts(cache, keys, fresh, today)
     # All results by part ID.
     parts.update(fresh)
     # CBOM rows in BOM order.

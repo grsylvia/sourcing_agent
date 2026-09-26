@@ -11,6 +11,7 @@ suppliers.toml ◀── you approve ◀── trial on real rows ◀── free
 
 | Ability | Skill | Commands |
 | --- | --- | --- |
+| Personal startup | `/source-bom` | `startup`, `memory` ([guide](docs/PERSONAL_SETUP.md)) |
 | BOM → CBOM | `/source-bom` | `estimate`, `run`, `suppliers` |
 | Find and verify suppliers | `/find-suppliers` | `discover`, `trial`, `candidates` ([docs/DISCOVERY.md](docs/DISCOVERY.md)) |
 
@@ -29,7 +30,7 @@ suppliers.toml ◀── you approve ◀── trial on real rows ◀── free
 sourcing estimate my_bom.xlsx            # price batch vs live first (no API calls)
 sourcing run my_bom.xlsx --out cbom.csv  # batch (default)
 sourcing run my_bom.xlsx --live          # live
-sourcing suppliers cbom.csv              # supplier win rates; flags suppliers that never win
+sourcing suppliers cbom.csv              # supplier win rates and repeated search failures
 sourcing discover cbom.csv --estimate    # plan + cost of scouting categories with unsourced rows
 sourcing discover cbom.csv               # scout, screen, save candidates
 sourcing trial vxb.com --cbom cbom.csv   # quote sample rows on one candidate only
@@ -97,6 +98,8 @@ sourcing run ──▶ run_log.jsonl (actual vs estimate, per pass) ──▶ so
 | 1–2 | Ratio: `actual ≈ β1 × estimate midpoint` |
 | 3+ | Least squares: `actual ≈ β0 + β1 × estimate midpoint`, with R² and typical error |
 
+Supplier learning logs each row’s supplier name/domains, search status/reason, and price-rule win. Valid quotes (even losing quotes) reset failure streaks. Errors, unchecked rows, and samples under five rows break a first-pass streak. Cache hits, duplicate pass IDs, retries, trials, and older totals-only logs cannot add failing runs. Drops require user selection; keep at least one supplier per category.
+
 Passes with errored rows are logged but not fitted. Estimates are recomputed from each pass's conversation shape, so changing the token assumptions keeps old runs usable.
 
 ## Code layout
@@ -126,7 +129,8 @@ src/sourcing_agent/
 | | `worker.py` | Sourcing worker (approved domains only) |
 | | `pipeline.py` · `cache.py` | Batches, cache reuse, Opus 5.5 escalation, CBOM rows |
 | | `estimate.py` · `commands.py` | Sourcing estimator (calibrated by `learning`); `run`, `estimate` |
-| `suppliers` | `wins.py` | Win rates per supplier and category |
+| `learning` | `suppliers.py` | Supplier outcomes; ≥3 consecutive failing first-pass runs with ≥5 checked rows each before recommending a drop |
+| `suppliers` | `wins.py` | CBOM win rates plus failure evidence from the learning log |
 | | `scout.py` · `screen.py` | Open-web scout; free screening (evidence, HTTPS, RDAP age) |
 | | `trial.py` · `registry.py` | Trial on real rows; candidate registry and approvals |
 | | `commands.py` | `suppliers`, `discover`, `trial`, `candidates` |
