@@ -7,10 +7,12 @@ import datetime
 # File paths.
 from pathlib import Path
 
+# Calibration from logged runs.
+from .calibration import Fit, fit_line, load_runs
 # Quote cache reader.
 from .cache import load_cache
-# BOM, suppliers, batching, and cache split shared with real runs.
-from .orchestrator import load_bom, load_suppliers, make_batches, split_cached
+# BOM, suppliers, conversation shapes, and cache split shared with real runs.
+from .orchestrator import load_bom, load_suppliers, pass_shape, split_cached
 # List-price costing.
 from .pricing import estimate_cost
 # Worker limits and models.
@@ -53,6 +55,8 @@ class Estimate:
     categories: list[tuple[str, int, int]]
     # Cost range keyed by (batch, model); escalation ranges assume every row is retried.
     costs: dict[tuple[bool, str], Range]
+    # Line fitted to logged actual costs, or None before any clean run.
+    calibration: Fit | None
 
 
 def conversation_usage(n_rows: int, n_suppliers: int, high: bool) -> Usage:
@@ -77,20 +81,39 @@ def conversation_usage(n_rows: int, n_suppliers: int, high: bool) -> Usage:
     )
 
 
-def total_usage(batches: list[tuple[str, list[dict]]], suppliers: list[dict], high: bool) -> Usage:
-    """Sum assumed usage over all worker conversations."""
+def total_usage(shape: list[tuple[int, int]], high: bool) -> Usage:
+    """Sum assumed usage over worker conversations given as (rows, suppliers)."""
     # Running total.
     total = Usage()
     # Add each conversation.
-    for category, rows in batches:
-        u = conversation_usage(len(rows), len(category_suppliers(category, suppliers)), high)
+    for n_rows, n_suppliers in shape:
+        u = conversation_usage(n_rows, n_suppliers, high)
         for f in fields(Usage):
             setattr(total, f.name, getattr(total, f.name) + getattr(u, f.name))
     # Totals.
     return total
 
 
-def estimate_bom(bom_path: Path, suppliers_path: Path, cache_path: Path, max_age_days: int) -> Estimate:
+def shape_range(shape: list[tuple[int, int]], model: str, batch: bool) -> Range:
+    """Assumption-based cost range for a pass on one model in one mode."""
+    # Low and high costs.
+    return Range(estimate_cost(total_usage(shape, False), model, batch), estimate_cost(total_usage(shape, True), model, batch))
+
+
+def calibrate(log_path: Path) -> Fit | None:
+    """Fit logged actual costs against today's assumption-based estimate midpoints."""
+    # Passes that finished without errored rows (errored rows cut the cost short).
+    runs = [r for r in load_runs(log_path) if not r["error_rows"]]
+    # Estimate midpoint (current assumptions) and actual cost per pass.
+    points = []
+    for r in runs:
+        est = shape_range([tuple(c) for c in r["shape"]], r["model"], r["batch"])
+        points.append(((est.low + est.high) / 2, r["actual_cost"]))
+    # Least-squares line, or None with no usable passes.
+    return fit_line(points)
+
+
+def estimate_bom(bom_path: Path, suppliers_path: Path, cache_path: Path, max_age_days: int, log_path: Path) -> Estimate:
     """Estimate the cost of sourcing a BOM in each mode, on each model."""
     # Approved suppliers and categories.
     config = load_suppliers(suppliers_path)
@@ -99,15 +122,9 @@ def estimate_bom(bom_path: Path, suppliers_path: Path, cache_path: Path, max_age
     # Rows the cache already answers.
     cached, todo, _ = split_cached(rows, config, load_cache(cache_path), max_age_days, datetime.date.today())
     # Worker conversations a run would start.
-    batches = make_batches(todo)
-    # Low and high usage.
-    low, high = total_usage(batches, config["suppliers"], False), total_usage(batches, config["suppliers"], True)
+    shape = pass_shape(todo, config["suppliers"])
     # Cost per mode and model.
-    costs = {
-        (batch, model): Range(estimate_cost(low, model, batch), estimate_cost(high, model, batch))
-        for batch in (True, False)
-        for model in (MODEL, ESCALATION_MODEL)
-    }
+    costs = {(batch, model): shape_range(shape, model, batch) for batch in (True, False) for model in (MODEL, ESCALATION_MODEL)}
     # Rows to source per category, in BOM order.
     counts: dict[str, int] = {}
     for r in todo:
@@ -115,4 +132,4 @@ def estimate_bom(bom_path: Path, suppliers_path: Path, cache_path: Path, max_age
     # Category breakdown with supplier counts.
     categories = [(c, n, len(category_suppliers(c, config["suppliers"]))) for c, n in counts.items()]
     # The estimate.
-    return Estimate(len(rows), len(cached), len(todo), len(batches), categories, costs)
+    return Estimate(len(rows), len(cached), len(todo), len(shape), categories, costs, calibrate(log_path))

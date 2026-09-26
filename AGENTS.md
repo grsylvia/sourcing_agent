@@ -19,6 +19,7 @@ Takes a BOM, sources each category from approved suppliers, and returns a CBOM (
 | Run mode | Batch API by default (50% off); `--live` for full-price fast runs |
 | Run gate | Skill asks mode, Opus retries, quote freshness, output path (with estimates), then a final Run / Cancel confirmation |
 | Cost estimate | `sourcing estimate` before each run: rows, cache hits, suppliers per category, mode, model; no API calls |
+| Cost calibration | Each run logs actual vs estimated cost per pass to `run_log.jsonl`; estimate fits `actual = β0 + β1 × estimate` (least squares; ratio fit under 3 clean passes; errored passes excluded) |
 | Quote reuse | `quote_cache.json`, rows reused up to `--max-age` days (default 7); keyed by part + suppliers, not quantity |
 
 # Project resources

@@ -31,7 +31,7 @@ from .batch import run_jobs
 # Quote cache helpers.
 from .cache import load_cache, lookup, quote_key, save_cache, store
 # Worker API and records.
-from .worker import ESCALATION_MODEL, MODEL, PartQuotes, PriceBreak, Quote, Usage, WorkerError, new_job, source_category
+from .worker import ESCALATION_MODEL, MODEL, PartQuotes, PriceBreak, Quote, Usage, WorkerError, category_suppliers, new_job, source_category
 
 # BOM rows per worker conversation; small batches stop pages being re-read.
 ROWS_PER_WORKER = 2
@@ -85,6 +85,14 @@ class RunSummary:
     escalation_usage: Usage
     # Rows retried on the escalation model.
     escalated: int
+    # (rows, suppliers) per worker conversation of the first pass.
+    first_shape: list[tuple[int, int]]
+    # (rows, suppliers) per worker conversation of the escalation pass.
+    escalation_shape: list[tuple[int, int]]
+    # Rows that errored in the first pass, before retries.
+    first_errors: int
+    # Rows that errored in the escalation pass.
+    escalation_errors: int
     # Currency of every price.
     currency: str
     # Rows answered from the quote cache.
@@ -201,6 +209,12 @@ def make_batches(rows: list[dict]) -> list[tuple[str, list[dict]]]:
         for category, group in groups.items()
         for i in range(0, len(group), ROWS_PER_WORKER)
     ]
+
+
+def pass_shape(rows: list[dict], suppliers: list[dict]) -> list[tuple[int, int]]:
+    """Return (rows, approved suppliers) for each worker conversation these rows would start."""
+    # One entry per batch.
+    return [(len(batch), len(category_suppliers(category, suppliers))) for category, batch in make_batches(rows)]
 
 
 def price_at(breaks: list[PriceBreak], packs: int) -> float:
@@ -381,6 +395,10 @@ async def source_bom(
     # First pass on the default model.
     if todo:
         fresh, errors = await _source_rows(client, todo, config, live, MODEL, usage)
+    # First-pass errors, before retries change them.
+    first_errors = len(errors)
+    # Escalation errors.
+    retry_errors: dict[str, str] = {}
     # Rows the first model errored on or found no quotes for.
     retry = [r for r in todo if r["part_id"] in errors or not fresh[r["part_id"]].quotes] if escalate else []
     # Retry them once on the escalation model.
@@ -413,7 +431,11 @@ async def source_bom(
     # CBOM rows in BOM order.
     cbom = [cbom_row(r, parts.get(r["part_id"]), errors.get(r["part_id"]), config["currency"]) for r in rows]
     # Rows, usage, and run facts.
-    return RunSummary(cbom, usage, escalation_usage, len(retry), config["currency"], reused, not live)
+    return RunSummary(
+        cbom, usage, escalation_usage, len(retry),
+        pass_shape(todo, config["suppliers"]), pass_shape(retry, config["suppliers"]), first_errors, len(retry_errors),
+        config["currency"], reused, not live,
+    )
 
 
 def write_cbom(path: Path, rows: list[dict]) -> None:

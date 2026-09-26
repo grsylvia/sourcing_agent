@@ -4,18 +4,24 @@
 import argparse
 # Run the async orchestrator.
 import asyncio
+# Run date for the log.
+import datetime
 # Progress output.
 import logging
 # Error output.
 import sys
+# Usage record for the log.
+from dataclasses import asdict
 # File paths.
 from pathlib import Path
 
 # API error types.
 import anthropic
 
+# Run log and fitted calibration line.
+from .calibration import Fit, append_run
 # Pre-run cost estimate.
-from .estimate import Estimate, Range, estimate_bom
+from .estimate import Estimate, Range, calibrate, estimate_bom, shape_range
 # Orchestrator entry point and input errors.
 from .orchestrator import InputError, run_sourcing
 # Cost estimate from usage.
@@ -29,6 +35,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SUPPLIERS = PROJECT_ROOT / "suppliers.toml"
 # Quote cache at the project root.
 CACHE_PATH = PROJECT_ROOT / "quote_cache.json"
+# Actual-vs-estimated cost log at the project root.
+RUN_LOG_PATH = PROJECT_ROOT / "run_log.jsonl"
 
 
 def money(r: Range) -> str:
@@ -64,7 +72,75 @@ def print_estimate(e: Estimate) -> None:
     print(f"\nBatch saves {money(Range(live.low - batch.low, live.high - batch.high))} on the first pass (tokens 50% off; $0.01 search fees are not discounted).")
     print("Time: batch usually under 1 h (up to 24 h); live takes minutes.")
     print(f"Retries: only rows {MODEL} cannot source go to {ESCALATION_MODEL}; --no-escalate skips them.")
-    print("Token sizes are assumptions (src/sourcing_agent/estimate.py); compare with the Usage lines after a run.")
+    # Calibrated figures from logged runs.
+    print_calibration(e)
+
+
+def describe_fit(fit: Fit) -> str:
+    """One-line description of a calibration line."""
+    # Ratio fit through the origin.
+    if fit.ratio:
+        return f"actual ≈ {fit.slope:.2f} × estimate midpoint ({fit.n} pass{'es' if fit.n != 1 else ''}; ratio fit until 3 clean passes)"
+    # Full regression line.
+    r2 = f", R² {fit.r2:.2f}" if fit.r2 is not None else ""
+    return f"actual ≈ {fit.slope:.2f} × estimate midpoint {'+' if fit.intercept >= 0 else '-'} ${abs(fit.intercept):.2f} ({fit.n} passes{r2})"
+
+
+def print_calibration(e: Estimate) -> None:
+    """Print estimates corrected by the line fitted to logged actual costs."""
+    # No clean runs logged yet.
+    if e.calibration is None:
+        print("Calibration: no logged runs yet; ranges use assumed token sizes (src/sourcing_agent/estimate.py).")
+        return
+    # Shorthand for the fit.
+    fit = e.calibration
+    # Typical error, when known.
+    err = f" ± ${fit.error:.2f}" if fit.error is not None else ""
+    # The fitted line.
+    print(f"\nCalibrated from logged runs: {describe_fit(fit)}")
+    # Calibrated first pass per mode.
+    for batch, label in ((True, "Batch (default)"), (False, "Live (--live)")):
+        r = e.costs[(batch, MODEL)]
+        print(f"{label:<17}{MODEL} pass ≈ ${fit.predict((r.low + r.high) / 2):.2f}{err}")
+
+
+def log_passes(summary, bom: Path, fit: Fit | None) -> None:
+    """Print actual vs estimated cost per pass and append each pass to the run log."""
+    # First pass and escalation pass, when they called the API.
+    passes = [
+        ("first", MODEL, summary.first_shape, summary.first_errors, summary.usage),
+        ("escalation", ESCALATION_MODEL, summary.escalation_shape, summary.escalation_errors, summary.escalation_usage),
+    ]
+    for name, model, shape, error_rows, usage in passes:
+        # Skip passes that made no requests.
+        if not usage.requests:
+            continue
+        # Assumption-based range for exactly these rows.
+        est = shape_range(shape, model, summary.batch)
+        # Actual list-price cost of the pass.
+        actual = estimate_cost(usage, model, summary.batch)
+        # Calibrated prediction from runs logged before this one.
+        calibrated = f", calibrated ${fit.predict((est.low + est.high) / 2):.2f}" if fit else ""
+        # Errored passes are logged but left out of the fit.
+        note = f" ({error_rows} errored rows: excluded from calibration)" if error_rows else ""
+        print(f"Actual vs estimate ({model}): ${actual:.2f} vs {money(est)}{calibrated}{note}")
+        # One log record per pass.
+        append_run(RUN_LOG_PATH, {
+            "date": datetime.date.today().isoformat(),
+            "bom": bom.name,
+            "pass": name,
+            "model": model,
+            "batch": summary.batch,
+            "rows": sum(n for n, _ in shape),
+            "shape": shape,
+            "error_rows": error_rows,
+            "estimate_low": round(est.low, 4),
+            "estimate_high": round(est.high, 4),
+            "actual_cost": round(actual, 4),
+            "usage": asdict(usage),
+        })
+    # Where the data went.
+    print(f"Logged to {RUN_LOG_PATH.name}; the next estimate refits on it.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -105,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "estimate":
         try:
             # Price the BOM without calling the API.
-            print_estimate(estimate_bom(args.bom, args.suppliers, CACHE_PATH, args.max_age))
+            print_estimate(estimate_bom(args.bom, args.suppliers, CACHE_PATH, args.max_age, RUN_LOG_PATH))
         except InputError as e:
             # Bad BOM or supplier file.
             print(f"Input error: {e}", file=sys.stderr)
@@ -150,6 +226,8 @@ def main(argv: list[str] | None = None) -> int:
     if summary.escalated:
         print(f"Usage ({ESCALATION_MODEL}, {summary.escalated} rows retried): {e.requests} requests | input {e.input_tokens:,} | cache write {e.cache_write_tokens:,} | cache read {e.cache_read_tokens:,} | output {e.output_tokens:,} | searches {e.web_searches} | fetches {e.web_fetches}")
     print(f"Estimated API cost ({'batch' if summary.batch else 'live'}, list price): ${cost + esc_cost:.2f} ({MODEL} ${cost:.2f} + {ESCALATION_MODEL} ${esc_cost:.2f})")
+    # Compare with the estimate and log for calibration.
+    log_passes(summary, args.bom, calibrate(RUN_LOG_PATH))
     # Non-zero exit when any row errored.
     return 1 if counts["error"] else 0
 

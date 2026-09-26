@@ -40,6 +40,7 @@ sourcing run my_bom.xlsx --live          # live
 | --- | --- |
 | `cbom.csv` | BOM + vendor + pricing ([docs/FORMATS.md](docs/FORMATS.md)) |
 | `quote_cache.json` | Reused quotes (local, gitignored) |
+| `run_log.jsonl` | Actual vs estimated cost per pass, for calibration (local, gitignored) |
 | Summary | Rows by status, cache reuse, parts total, tokens and cost per model |
 | Exit code | `0` ok · `1` some rows errored · `2` bad input or credentials |
 
@@ -69,6 +70,20 @@ Example BOM (6 rows, cache empty):
 | Live | $0.66–2.20 | $0.17–0.62 | $0.66–5.94 |
 
 Arctos-size BOM (75 rows), Sonnet pass: ~$6–16 batch, ~$8–28 live.
+
+### Calibration
+
+```
+sourcing run ──▶ run_log.jsonl (actual vs estimate, per pass) ──▶ sourcing estimate refits ──▶ calibrated figure
+```
+
+| Logged clean passes | Fit |
+| --- | --- |
+| 0 | None; ranges only |
+| 1–2 | Ratio: `actual ≈ β1 × estimate midpoint` |
+| 3+ | Least squares: `actual ≈ β0 + β1 × estimate midpoint`, with R² and typical error |
+
+Passes with errored rows are logged but not fitted. Estimates are recomputed from each pass's conversation shape, so changing the token assumptions keeps old runs usable.
 
 ## Status
 
