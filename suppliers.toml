@@ -10,8 +10,8 @@ categories = ["fasteners", "bearings", "motion", "motors", "electronics", "other
 name = "McMaster-Carr"
 # Domains the worker may search and fetch.
 domains = ["mcmaster.com"]
-# Categories this supplier is searched for.
-categories = ["fasteners", "bearings", "motion", "other"]
+# Categories this supplier is searched for (fasteners, bearings, other dropped 2026-09-26: 0 wins on Arctos).
+categories = ["motion"]
 
 # Misumi: fasteners, bearings, and motion components.
 [[suppliers]]
@@ -19,8 +19,8 @@ categories = ["fasteners", "bearings", "motion", "other"]
 name = "Misumi"
 # Domains the worker may search and fetch.
 domains = ["misumi-ec.com"]
-# Categories this supplier is searched for.
-categories = ["fasteners", "bearings", "motion"]
+# Categories this supplier is searched for (fasteners, bearings dropped 2026-09-26: 0 wins on Arctos).
+categories = ["motion"]
 
 # Bolt Depot: fasteners.
 [[suppliers]]
@@ -55,8 +55,8 @@ categories = ["electronics", "motors"]
 name = "Amazon"
 # Domains the worker may search and fetch.
 domains = ["amazon.com"]
-# Categories this supplier is searched for.
-categories = ["fasteners", "bearings", "motion", "motors", "electronics", "other"]
+# Categories this supplier is searched for (electronics, other dropped 2026-09-26: 0 wins on Arctos).
+categories = ["fasteners", "bearings", "motion", "motors"]
 
 # AliExpress: general marketplace.
 [[suppliers]]
@@ -64,5 +64,5 @@ categories = ["fasteners", "bearings", "motion", "motors", "electronics", "other
 name = "AliExpress"
 # Domains the worker may search and fetch.
 domains = ["aliexpress.com", "aliexpress.us"]
-# Categories this supplier is searched for.
-categories = ["fasteners", "bearings", "motion", "motors", "electronics", "other"]
+# Categories this supplier is searched for (fasteners dropped 2026-09-26: 0 wins on Arctos).
+categories = ["bearings", "motion", "motors", "electronics", "other"]
