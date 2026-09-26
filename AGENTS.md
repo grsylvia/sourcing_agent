@@ -7,7 +7,8 @@ Takes a BOM, sources each category from approved suppliers, and returns a CBOM (
 | Topic | Decision |
 | --- | --- |
 | Runtime | Local Python on the Claude Messages API (`anthropic` SDK) |
-| Code layout | `core/` shared engine, `cbom/` CBOM generation, `suppliers/` supplier management; imports flow `suppliers → cbom → core` only |
+| Code layout | `core/` shared engine, `learning/` run-by-run learning, `cbom/` CBOM generation, `suppliers/` supplier management; imports flow `suppliers → cbom → learning → core` only |
+| Learning goal | `learning/` exists for token minimization and cost optimization; it learns from every logged API pass |
 | Fan-out | Code splits the BOM by category; one worker per category, run in parallel |
 | Supplier lock | Worker web search/fetch restricted to approved supplier domains (`allowed_domains`) |
 | Vendor selection | Workers return quotes; code picks the lowest price |
@@ -24,7 +25,7 @@ Takes a BOM, sources each category from approved suppliers, and returns a CBOM (
 | Run mode | Batch API by default (50% off); `--live` for full-price fast runs |
 | Run gate | Skill asks mode, Opus retries, quote freshness, output path (with estimates), then a final Run / Cancel confirmation |
 | Cost estimate | `sourcing estimate` before each run: rows, cache hits, suppliers per category, mode, model; no API calls |
-| Cost calibration | Each run logs actual vs estimated cost per pass to `run_log.jsonl`; estimate fits `actual = β0 + β1 × estimate` (least squares; ratio fit under 3 clean passes; errored passes excluded) |
+| Cost calibration | `learning/`: each sourcing or trial pass logs actual vs estimated cost to `run_log.jsonl`; `regression.py` fits `actual = β0 + β1 × estimate` (least squares; ratio fit under 3 clean passes; errored passes excluded) |
 | Quote reuse | `quote_cache.json`, rows reused up to `--max-age` days (default 7); keyed by part + suppliers, not quantity |
 
 # Project resources

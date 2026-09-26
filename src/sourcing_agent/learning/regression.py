@@ -1,67 +1,38 @@
-"""Cost calibration: logs actual run costs and fits actual = intercept + slope × estimate by least squares."""
+"""Estimated-vs-actual regression: fits actual cost = intercept + slope × estimated cost by least squares."""
 
-# Run log format.
-import json
 # Standard error of the fit.
 import math
 # Fit record.
 from dataclasses import dataclass
-# File paths.
-from pathlib import Path
 
-# Logged passes needed before the fit gets an intercept (fewer fit a ratio through the origin).
+# Points needed before the fit gets an intercept (fewer fit a ratio through the origin).
 MIN_POINTS_FOR_INTERCEPT = 3
 
 
-# A fitted calibration line.
+# A fitted line from estimated cost to actual cost.
 @dataclass
 class Fit:
     # Fixed cost per pass, USD (0 for a ratio fit).
     intercept: float
     # Actual dollars per estimated dollar.
     slope: float
-    # Passes the fit used.
+    # Points the fit used.
     n: int
     # Share of variance explained, or None when it cannot be computed.
     r2: float | None
-    # Typical prediction error, USD, or None with too few passes.
+    # Typical prediction error, USD, or None with too few points.
     error: float | None
-    # True for a ratio through the origin (too few passes or a non-positive slope).
+    # True for a ratio through the origin (too few points or a non-positive slope).
     ratio: bool = False
 
     def predict(self, estimate: float) -> float:
-        """Return the calibrated cost for an estimate, never below zero."""
+        """Return the corrected cost for an estimate, never below zero."""
         # Point on the fitted line.
         return max(0.0, self.intercept + self.slope * estimate)
 
 
-def append_run(path: Path, record: dict) -> None:
-    """Append one pass record to the run log."""
-    # One JSON object per line.
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
-
-
-def load_runs(path: Path) -> list[dict]:
-    """Read every pass record, skipping unreadable lines."""
-    # No log yet.
-    if not path.exists():
-        return []
-    # Parsed records.
-    records = []
-    # One record per non-blank line.
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError:
-            # A damaged line is ignored.
-            continue
-    # All readable records.
-    return records
-
-
 def fit_line(points: list[tuple[float, float]]) -> Fit | None:
-    """Fit actual cost against estimated cost; None when no usable points."""
+    """Fit (estimated, actual) points; None when no usable points."""
     # Only points with a positive estimate carry information.
     points = [(x, y) for x, y in points if x > 0]
     # Number of points.
@@ -94,3 +65,13 @@ def fit_line(points: list[tuple[float, float]]) -> Fit | None:
     error = math.sqrt(ss_res / (n - params)) if n > params else None
     # The fitted line.
     return Fit(intercept, slope, n, r2, error, params == 1)
+
+
+def describe_fit(fit: Fit) -> str:
+    """One-line description of a fitted line."""
+    # Ratio fit through the origin.
+    if fit.ratio:
+        return f"actual ≈ {fit.slope:.2f} × estimate midpoint ({fit.n} pass{'es' if fit.n != 1 else ''}; ratio fit until {MIN_POINTS_FOR_INTERCEPT} clean passes)"
+    # Full regression line.
+    r2 = f", R² {fit.r2:.2f}" if fit.r2 is not None else ""
+    return f"actual ≈ {fit.slope:.2f} × estimate midpoint {'+' if fit.intercept >= 0 else '-'} ${abs(fit.intercept):.2f} ({fit.n} passes{r2})"

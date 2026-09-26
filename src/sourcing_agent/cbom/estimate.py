@@ -1,20 +1,24 @@
-"""CBOM cost estimate: prices sourcing passes before a run, calibrates on logged actual costs, and logs each pass."""
+"""CBOM cost estimate: prices sourcing passes from their shape; learning/ calibrates it and logs each pass."""
 
-# Log dates.
+# Cache ages.
 import datetime
-# Sum usage fields and record usage.
-from dataclasses import asdict, dataclass, fields
+# Sum usage fields.
+from dataclasses import dataclass, fields
 # File paths.
 from pathlib import Path
 
 # Models, turn cap, and usage totals.
 from ..core.agent import ESCALATION_MODEL, MAX_TURNS, MODEL, Usage
-# Run log and fitted line.
-from ..core.calibration import Fit, append_run, fit_line, load_runs
 # Supplier list and per-category suppliers.
 from ..core.config import category_suppliers, load_suppliers
 # Cost model and shared token assumptions.
-from ..core.pricing import OUTPUT_PER_ROW, PROMPT_TOKENS, SEARCH_TOKENS, Range, estimate_cost, money
+from ..core.pricing import OUTPUT_PER_ROW, PROMPT_TOKENS, SEARCH_TOKENS, Range, estimate_cost
+# Calibration and the per-pass comparison.
+from ..learning.calibration import calibrate, compare_line
+# Fitted line.
+from ..learning.regression import Fit
+# Run log.
+from ..learning.runlog import record_pass
 # BOM reader.
 from .bom import load_bom
 # Quote cache reader.
@@ -90,14 +94,10 @@ def shape_range(shape: list[tuple[int, int]], model: str, batch: bool) -> Range:
     return Range(estimate_cost(total_usage(shape, False), model, batch), estimate_cost(total_usage(shape, True), model, batch))
 
 
-def calibrate(log_path: Path) -> Fit | None:
-    """Fit logged actual costs against today's assumption-based estimate midpoints."""
-    # Passes that finished without errored rows (errored rows cut the cost short).
-    runs = [r for r in load_runs(log_path) if not r["error_rows"]]
-    # Estimate midpoint (current assumptions) and actual cost per pass.
-    points = [(shape_range([tuple(c) for c in r["shape"]], r["model"], r["batch"]).mid, r["actual_cost"]) for r in runs]
-    # Least-squares line, or None with no usable passes.
-    return fit_line(points)
+def calibrate_sourcing(log_path: Path) -> Fit | None:
+    """Fit logged sourcing passes (first, escalation, trial) against this estimator."""
+    # Learning fits the log with the sourcing estimator.
+    return calibrate(log_path, shape_range)
 
 
 def estimate_bom(bom_path: Path, suppliers_path: Path, cache_path: Path, max_age_days: int, log_path: Path) -> Estimate:
@@ -119,36 +119,14 @@ def estimate_bom(bom_path: Path, suppliers_path: Path, cache_path: Path, max_age
     # Category breakdown with supplier counts.
     categories = [(c, n, len(category_suppliers(c, config["suppliers"]))) for c, n in counts.items()]
     # The estimate.
-    return Estimate(len(rows), len(cached), len(todo), len(shape), categories, costs, calibrate(log_path))
+    return Estimate(len(rows), len(cached), len(todo), len(shape), categories, costs, calibrate_sourcing(log_path))
 
 
 def log_pass(log_path: Path, name: str, model: str, shape: list[tuple[int, int]], error_rows: int, usage: Usage, batch: bool, source: str, fit: Fit | None) -> str | None:
-    """Append one sourcing pass to the run log; return its actual-vs-estimate line, or None if it made no requests."""
-    # Skip passes that made no requests.
-    if not usage.requests:
-        return None
-    # Assumption-based range for exactly these rows.
+    """Record one sourcing pass for learning; return its actual-vs-estimate line, or None if it made no requests."""
+    # Estimate for exactly these rows.
     est = shape_range(shape, model, batch)
-    # Actual list-price cost of the pass.
-    actual = estimate_cost(usage, model, batch)
-    # One log record per pass.
-    append_run(log_path, {
-        "date": datetime.date.today().isoformat(),
-        "bom": source,
-        "pass": name,
-        "model": model,
-        "batch": batch,
-        "rows": sum(n for n, _ in shape),
-        "shape": shape,
-        "error_rows": error_rows,
-        "estimate_low": round(est.low, 4),
-        "estimate_high": round(est.high, 4),
-        "actual_cost": round(actual, 4),
-        "usage": asdict(usage),
-    })
-    # Calibrated prediction from runs logged before this one.
-    calibrated = f", calibrated ${fit.predict(est.mid):.2f}" if fit else ""
-    # Errored passes are logged but left out of the fit.
-    note = f" ({error_rows} errored rows: excluded from calibration)" if error_rows else ""
-    # Summary line for the caller to print.
-    return f"Actual vs estimate ({model}): ${actual:.2f} vs {money(est)}{calibrated}{note}"
+    # Append the pass to the run log.
+    actual = record_pass(log_path, source, name, model, batch, shape, error_rows, usage, est)
+    # Comparison line, when the pass made requests.
+    return compare_line(model, actual, est, fit, error_rows) if actual is not None else None

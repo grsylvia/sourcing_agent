@@ -9,12 +9,12 @@ from pathlib import Path
 from ..core import paths
 # Models the workers use.
 from ..core.agent import ESCALATION_MODEL, MODEL
-# Fitted calibration line.
-from ..core.calibration import Fit
 # Cost model.
 from ..core.pricing import Range, estimate_cost, money
+# Fitted line and its description.
+from ..learning.regression import Fit, describe_fit
 # Estimate, calibration, and pass logging.
-from .estimate import Estimate, calibrate, estimate_bom, log_pass
+from .estimate import Estimate, calibrate_sourcing, estimate_bom, log_pass
 # Whole-run pipeline.
 from .pipeline import RunSummary, run_sourcing
 
@@ -63,7 +63,7 @@ def cmd_run(args) -> int:
     # Summary lines.
     print_run(summary, out)
     # Compare with the estimate and log for calibration.
-    report_passes(summary, args.bom, calibrate(paths.RUN_LOG_PATH))
+    report_passes(summary, args.bom, calibrate_sourcing(paths.RUN_LOG_PATH))
     # Non-zero exit when any row errored.
     return 1 if any(r["status"] == "error" for r in summary.rows) else 0
 
@@ -97,16 +97,6 @@ def print_estimate(e: Estimate) -> None:
     print(f"Retries: only rows {MODEL} cannot source go to {ESCALATION_MODEL}; --no-escalate skips them.")
     # Calibrated figures from logged runs.
     print_calibration(e)
-
-
-def describe_fit(fit: Fit) -> str:
-    """One-line description of a calibration line."""
-    # Ratio fit through the origin.
-    if fit.ratio:
-        return f"actual ≈ {fit.slope:.2f} × estimate midpoint ({fit.n} pass{'es' if fit.n != 1 else ''}; ratio fit until 3 clean passes)"
-    # Full regression line.
-    r2 = f", R² {fit.r2:.2f}" if fit.r2 is not None else ""
-    return f"actual ≈ {fit.slope:.2f} × estimate midpoint {'+' if fit.intercept >= 0 else '-'} ${abs(fit.intercept):.2f} ({fit.n} passes{r2})"
 
 
 def print_calibration(e: Estimate) -> None:

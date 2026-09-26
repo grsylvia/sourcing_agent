@@ -103,9 +103,10 @@ Passes with errored rows are logged but not fitted. Estimates are recomputed fro
 ```
 src/sourcing_agent/
 ├── cli.py          thin entry point: registers both command sets, maps errors to exit codes
-├── core/           shared engine (imports nothing from cbom/ or suppliers/)
-├── cbom/           CBOM generation (imports core/ only)
-└── suppliers/      supplier management (imports core/ and cbom/)
+├── core/           shared engine (imports nothing else in the package)
+├── learning/       run-by-run learning for token and cost minimization (imports core/ only)
+├── cbom/           CBOM generation (imports core/, learning/)
+└── suppliers/      supplier management (imports core/, learning/, cbom/)
 ```
 
 | Package | Module | Role |
@@ -113,12 +114,15 @@ src/sourcing_agent/
 | `core` | `agent.py` | Agent loop: `Job`, `Usage`, request params, submit-tool handling, live conversation |
 | | `runner.py` | Runs jobs live (4 at a time) or through the Batch API |
 | | `config.py` · `paths.py` · `errors.py` · `web.py` | `suppliers.toml`, project files, errors, domain helpers |
-| | `pricing.py` · `calibration.py` | API cost model and ranges; run log + least-squares fit |
+| | `pricing.py` | API cost model, cost ranges, shared token-size assumptions |
+| `learning` | `runlog.py` | Every API pass: shape, usage by meter, estimate, actual cost (training data) |
+| | `regression.py` | Estimated-vs-actual least-squares fit |
+| | `calibration.py` | Corrects estimates with the fit (estimator injected by the worker); per-pass comparison |
 | `cbom` | `bom.py` | BOM (CSV/.xlsx) in, CBOM out, CBOMs read back |
 | | `quotes.py` | Quote records and the lowest-total price rule |
 | | `worker.py` | Sourcing worker (approved domains only) |
 | | `pipeline.py` · `cache.py` | Batches, cache reuse, Opus 5.5 escalation, CBOM rows |
-| | `estimate.py` · `commands.py` | Pre-run estimate and pass logging; `run`, `estimate` |
+| | `estimate.py` · `commands.py` | Sourcing estimator (calibrated by `learning`); `run`, `estimate` |
 | `suppliers` | `wins.py` | Win rates per supplier and category |
 | | `scout.py` · `screen.py` | Open-web scout; free screening (evidence, HTTPS, RDAP age) |
 | | `trial.py` · `registry.py` | Trial on real rows; candidate registry and approvals |

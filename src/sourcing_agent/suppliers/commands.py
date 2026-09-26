@@ -27,7 +27,7 @@ from ..core.runner import run_jobs
 # CBOM reader.
 from ..cbom.bom import read_cboms
 # Sourcing-pass estimate, calibration, and logging (trials use the sourcing worker).
-from ..cbom.estimate import calibrate, log_pass, shape_range
+from ..cbom.estimate import calibrate_sourcing, log_pass, shape_range
 # Conversation shapes.
 from ..cbom.pipeline import pass_shape
 # Candidate registry.
@@ -223,7 +223,7 @@ def cmd_trial(args) -> int:
     # Mode, estimate, and calibration.
     batch = not args.live
     est = shape_range(shape, MODEL, batch)
-    fit = calibrate(paths.RUN_LOG_PATH)
+    fit = calibrate_sourcing(paths.RUN_LOG_PATH)
     gaps = sum(r.get("status") != "sourced" for r in sample)
     # Plan.
     print(f"Trial of {entry['name']} ({domain}) on {len(sample)} rows ({gaps} unsourced, {len(sample) - gaps} sourced for a price check)")
