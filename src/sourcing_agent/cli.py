@@ -1,4 +1,4 @@
-"""Command line: sourcing run BOM [--suppliers FILE] [--out FILE] [--max-age DAYS] [--live] [--no-escalate]; sourcing estimate BOM."""
+"""Command line: sourcing run BOM [--suppliers FILE] [--out FILE] [--max-age DAYS] [--live] [--no-escalate]; sourcing estimate BOM; sourcing suppliers CBOM..."""
 
 # Argument parsing.
 import argparse
@@ -22,8 +22,10 @@ import anthropic
 from .calibration import Fit, append_run
 # Pre-run cost estimate.
 from .estimate import Estimate, Range, calibrate, estimate_bom, shape_range
-# Orchestrator entry point and input errors.
-from .orchestrator import InputError, run_sourcing
+# Orchestrator entry point, supplier loader, and input errors.
+from .orchestrator import InputError, load_suppliers, run_sourcing
+# Supplier win rates from CBOMs.
+from .wins import MIN_ROWS_TO_DROP, read_cboms, supplier_wins
 # Cost estimate from usage.
 from .pricing import estimate_cost
 # Models the workers use.
@@ -143,6 +145,29 @@ def log_passes(summary, bom: Path, fit: Fit | None) -> None:
     print(f"Logged to {RUN_LOG_PATH.name}; the next estimate refits on it.")
 
 
+def print_wins(cboms: list[Path], suppliers_path: Path) -> None:
+    """Print supplier win rates per category and the suppliers that never win."""
+    # Win counts for every supplier and category in suppliers.toml.
+    stats = supplier_wins(read_cboms(cboms), load_suppliers(suppliers_path)["suppliers"])
+    # Category, then most wins first.
+    stats.sort(key=lambda s: (s.category, -s.wins, s.supplier))
+    # Table of wins.
+    print(f"{'Category':<14}{'Supplier':<16}{'Wins':>5}{'Share':>7}{'Sourced rows':>14}")
+    for s in stats:
+        share = f"{s.wins / s.sourced:.0%}" if s.sourced else "-"
+        print(f"{s.category:<14}{s.supplier:<16}{s.wins:>5}{share:>7}{s.sourced:>14}")
+    # Suppliers that won nothing over enough rows.
+    drops = [s for s in stats if s.drop_candidate]
+    if not drops:
+        print(f"\nNo drop candidates (a supplier needs 0 wins over at least {MIN_ROWS_TO_DROP} sourced rows in a category).")
+        return
+    print(f"\nDrop candidates (0 wins over at least {MIN_ROWS_TO_DROP} sourced rows):")
+    for s in drops:
+        print(f"- {s.supplier} from {s.category} ({s.sourced} rows)")
+    print("Each drop saves about one search ($0.01) plus its result tokens per future row in that category.")
+    print("Dropping changes that category's quote-cache key, so its cached quotes are re-sourced on the next run.")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse arguments, run sourcing, and print a summary."""
     # Top-level parser.
@@ -171,6 +196,12 @@ def main(argv: list[str] | None = None) -> int:
     est.add_argument("--suppliers", type=Path, default=DEFAULT_SUPPLIERS, help="Supplier TOML (default: project suppliers.toml).")
     # Cache age that counts as free reuse.
     est.add_argument("--max-age", type=int, default=7, metavar="DAYS", help="Count cached quotes up to this many days old as free (default: 7).")
+    # The suppliers subcommand.
+    sup = commands.add_parser("suppliers", help="Show supplier win rates per category from CBOMs and suppliers that never win.")
+    # Finished CBOMs to count wins in.
+    sup.add_argument("cboms", type=Path, nargs="+", help="One or more CBOM CSVs.")
+    # Approved supplier list.
+    sup.add_argument("--suppliers", type=Path, default=DEFAULT_SUPPLIERS, help="Supplier TOML (default: project suppliers.toml).")
     # Parse the command line.
     args = parser.parse_args(argv)
     # Warnings only from other libraries, on stderr.
@@ -184,6 +215,16 @@ def main(argv: list[str] | None = None) -> int:
             print_estimate(estimate_bom(args.bom, args.suppliers, CACHE_PATH, args.max_age, RUN_LOG_PATH))
         except InputError as e:
             # Bad BOM or supplier file.
+            print(f"Input error: {e}", file=sys.stderr)
+            return 2
+        return 0
+    # Win-rate report only.
+    if args.command == "suppliers":
+        try:
+            # Count wins in the CBOMs.
+            print_wins(args.cboms, args.suppliers)
+        except (InputError, OSError, KeyError) as e:
+            # Missing file, bad supplier file, or not a CBOM.
             print(f"Input error: {e}", file=sys.stderr)
             return 2
         return 0

@@ -55,9 +55,12 @@ Runs `~/sourcing_agent` (Claude Messages API). Each run spends API credits.
 | Calibration | Pass logged to `run_log.jsonl`; the next estimate refits on it |
 | Rows to review | `not_found` / `error` rows and their `sourcing_notes` |
 
+7. **Prune suppliers.** Run `~/sourcing_agent/.venv/bin/sourcing suppliers <cbom.csv> [older CBOMs…]` (free). If it lists drop candidates, ask in one AskUserQuestion call (multiSelect) which to drop, noting that each saves ~1 search per future row and re-sources that category's cached quotes. For each chosen drop, remove the category from that supplier's `categories` in `~/sourcing_agent/suppliers.toml`; drop the whole `[[suppliers]]` entry only if no categories remain.
+
 ## Rules
 
 - Never start `sourcing run` without the step 4 confirmation, even if the user asked to source the BOM.
 - Never edit prices in the CBOM by hand; re-run rows instead.
 - Never edit or delete `run_log.jsonl`; it is the calibration data.
+- Never drop a supplier without the step 7 answer, and never leave a category with no supplier.
 - Exit code 2 means bad input or credentials; show the message and stop.

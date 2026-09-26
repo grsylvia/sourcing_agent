@@ -22,6 +22,7 @@ BOM ──▶ split by category ──▶ worker per category (parallel) ──�
 sourcing estimate my_bom.xlsx            # price batch vs live first (no API calls)
 sourcing run my_bom.xlsx --out cbom.csv  # batch (default)
 sourcing run my_bom.xlsx --live          # live
+sourcing suppliers cbom.csv              # supplier win rates; flags suppliers that never win
 ```
 
 | BOM input | Detail |
@@ -97,4 +98,6 @@ Passes with errored rows are logged but not fitted. Estimates are recomputed fro
 | Claude Code skill | ✅ `skill/source-bom/SKILL.md` |
 | Excel BOM input + template | ✅ `templates/bom_template.xlsx` |
 | Cost estimate + Opus 5.5 escalation | ✅ `src/sourcing_agent/estimate.py` |
+| Shared per-category cache prefix | ✅ `src/sourcing_agent/worker.py` |
+| Supplier win rates / pruning | ✅ `src/sourcing_agent/wins.py` |
 | Live run | ⏳ needs `ANTHROPIC_API_KEY` |

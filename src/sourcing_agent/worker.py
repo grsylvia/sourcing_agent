@@ -151,8 +151,8 @@ def category_suppliers(category: str, suppliers: list[dict]) -> list[dict]:
     return [s for s in suppliers if category in s["categories"]]
 
 
-def build_submit_tool(part_ids: list[str], vendor_names: list[str]) -> dict:
-    """Build the strict tool the worker calls once with all of its quotes."""
+def build_submit_tool(vendor_names: list[str]) -> dict:
+    """Build the strict tool the worker calls once with all of its quotes (identical for every batch in a category)."""
     # Schema for one price break.
     price_break = {
         "type": "object",
@@ -187,7 +187,7 @@ def build_submit_tool(part_ids: list[str], vendor_names: list[str]) -> dict:
         "additionalProperties": False,
         "required": ["part_id", "quotes", "notes"],
         "properties": {
-            "part_id": {"type": "string", "enum": part_ids},
+            "part_id": {"type": "string", "description": "The row's part_id exactly as given in the BOM rows."},
             "quotes": {"type": "array", "items": quote},
             "notes": {"type": "string", "description": "Why quotes are missing, or other caveats."},
         },
@@ -206,20 +206,15 @@ def build_submit_tool(part_ids: list[str], vendor_names: list[str]) -> dict:
     }
 
 
-def build_prompt(category: str, rows: list[dict], suppliers: list[dict], currency: str) -> str:
-    """Build the task message for one batch."""
+def build_instructions(category: str, suppliers: list[dict], currency: str) -> str:
+    """Build the task instructions, identical for every batch in a category so they cache once."""
     # One line per approved supplier with its domains.
     supplier_lines = "\n".join(f"- {s['name']}: {', '.join(s['domains'])}" for s in suppliers)
-    # One JSON line per BOM row.
-    row_lines = "\n".join(json.dumps(r, ensure_ascii=False) for r in rows)
-    # Task instructions, suppliers, and BOM rows.
-    return f"""Source the "{category}" parts below from the approved suppliers.
+    # Task, suppliers, and procedure; the BOM rows follow in a separate block.
+    return f"""Source the "{category}" BOM rows given after these instructions from the approved suppliers.
 
 Approved suppliers (search and fetch only these):
 {supplier_lines}
-
-BOM rows (JSON, one per line):
-{row_lines}
 
 For each BOM row:
 1. Search each approved supplier once for a listing that matches the description and spec.
@@ -229,7 +224,15 @@ For each BOM row:
 5. Only report prices you saw on the supplier's page or search result. Skip listings with no visible price.
 6. Note any spec deviation in match_notes.
 
-When done, call {SUBMIT_TOOL} once with every row. Give rows with no valid listing an empty quotes list and a short reason in notes."""
+When done, call {SUBMIT_TOOL} once with every row, using each row's part_id exactly as given. Give rows with no valid listing an empty quotes list and a short reason in notes."""
+
+
+def build_rows(rows: list[dict]) -> str:
+    """Build the per-batch block listing the BOM rows."""
+    # One JSON line per BOM row.
+    row_lines = "\n".join(json.dumps(r, ensure_ascii=False) for r in rows)
+    # Rows block.
+    return f"BOM rows (JSON, one per line):\n{row_lines}"
 
 
 def _domain_allowed(url: str, domains: list[str]) -> bool:
@@ -331,9 +334,14 @@ def new_job(category: str, rows: list[dict], suppliers: list[dict], currency: st
         "max_content_tokens": MAX_PAGE_TOKENS,
     }
     # Client tool for the final submission.
-    submit = build_submit_tool([r["part_id"] for r in rows], [s["name"] for s in approved])
+    submit = build_submit_tool([s["name"] for s in approved])
     # Conversation starts with the batch task.
-    first = {"role": "user", "content": build_prompt(category, rows, approved, currency)}
+    first = {"role": "user", "content": [
+        # Shared per-category prefix (tools, system, instructions) ends here, so later batches read it from the cache.
+        {"type": "text", "text": build_instructions(category, approved, currency), "cache_control": {"type": "ephemeral"}},
+        # Rows that differ per batch go after the breakpoint.
+        {"type": "text", "text": build_rows(rows)},
+    ]}
     # The ready-to-send job.
     return Job(category, rows, approved, [web_search, web_fetch, submit], [first], model=model)
 

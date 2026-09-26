@@ -16,6 +16,8 @@ Takes a BOM, sources each category from approved suppliers, and returns a CBOM (
 | Model | `claude-sonnet-5`, effort `medium`; no refusal fallback (not on Batch API) |
 | Escalation | Rows Sonnet leaves `not_found` / `error` retried once on `claude-opus-5-5` (same mode); `--no-escalate` skips |
 | Token use | 2 rows per worker, 15K-token page cap, prompt caching, usage + cost per run |
+| Shared cache prefix | Tools + system + category instructions byte-identical per category, cache breakpoint before the per-batch rows |
+| Supplier pruning | `sourcing suppliers <cbom>…` flags suppliers with 0 wins over ≥5 sourced rows in a category; user picks drops; Claude edits `suppliers.toml` |
 | Run mode | Batch API by default (50% off); `--live` for full-price fast runs |
 | Run gate | Skill asks mode, Opus retries, quote freshness, output path (with estimates), then a final Run / Cancel confirmation |
 | Cost estimate | `sourcing estimate` before each run: rows, cache hits, suppliers per category, mode, model; no API calls |
