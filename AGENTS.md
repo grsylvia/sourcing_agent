@@ -7,6 +7,7 @@ Takes a BOM, sources each category from approved suppliers, and returns a CBOM (
 | Topic | Decision |
 | --- | --- |
 | Runtime | Local Python on the Claude Messages API (`anthropic` SDK) |
+| Code layout | `core/` shared engine, `cbom/` CBOM generation, `suppliers/` supplier management; imports flow `suppliers → cbom → core` only |
 | Fan-out | Code splits the BOM by category; one worker per category, run in parallel |
 | Supplier lock | Worker web search/fetch restricted to approved supplier domains (`allowed_domains`) |
 | Vendor selection | Workers return quotes; code picks the lowest price |

@@ -1,24 +1,59 @@
-"""Batch mode: runs worker jobs through the Message Batches API (50% off every token)."""
+"""Runs worker jobs live (a few at a time, full price) or through the Message Batches API (50% off every token)."""
 
-# Poll delay between status checks.
+# Concurrency and poll delays.
 import asyncio
 # Progress lines.
 import logging
-
-# Async Claude client.
-import anthropic
-
 # Any worker's parsed result.
 from typing import Any
 
-# Worker job helpers shared with live mode.
-from .worker import Job, Usage, WorkerError, handle_response, request_params
+# Async Claude client and API errors.
+import anthropic
 
+# Agent loop shared with every worker.
+from .agent import Job, Usage, handle_response, request_params, run_live
+# Worker failure type.
+from .errors import WorkerError
+
+# Worker conversations running at once in live mode.
+MAX_PARALLEL = 4
 # Seconds between batch status checks.
 POLL_SECONDS = 30
 
 # Logger for progress lines.
 log = logging.getLogger(__name__)
+
+
+async def run_jobs(client: anthropic.AsyncAnthropic, jobs: list[Job], live: bool, usage: Usage) -> list[Any | str]:
+    """Run every job to completion; return its parsed submission or an error message, in job order."""
+    # Nothing to run.
+    if not jobs:
+        return []
+    # Pick the runner for the mode.
+    return await (run_live_jobs(client, jobs, usage) if live else run_batch_jobs(client, jobs, usage))
+
+
+async def run_live_jobs(client: anthropic.AsyncAnthropic, jobs: list[Job], usage: Usage) -> list[Any | str]:
+    """Live mode: stream each job's conversation, MAX_PARALLEL at a time."""
+    # Limit concurrent conversations.
+    gate = asyncio.Semaphore(MAX_PARALLEL)
+
+    async def one(job: Job) -> Any | str:
+        """Run one job; return its result or an error message."""
+        # Wait for a free slot.
+        async with gate:
+            try:
+                # Run the conversation.
+                return await run_live(client, job, usage)
+            except anthropic.AuthenticationError:
+                # Bad credentials stop the whole run.
+                raise
+            except (WorkerError, anthropic.APIError) as e:
+                # Other failures mark only this job as errored.
+                return str(e)
+
+    # Run all jobs.
+    return await asyncio.gather(*(one(job) for job in jobs))
 
 
 async def _wait(client: anthropic.AsyncAnthropic, batch_id: str) -> None:
@@ -38,8 +73,8 @@ async def _wait(client: anthropic.AsyncAnthropic, batch_id: str) -> None:
         await asyncio.sleep(POLL_SECONDS)
 
 
-async def run_jobs(client: anthropic.AsyncAnthropic, jobs: list[Job], usage: Usage) -> list[Any | str]:
-    """Run every job to completion in batch rounds; return its parsed submission or an error message per job."""
+async def run_batch_jobs(client: anthropic.AsyncAnthropic, jobs: list[Job], usage: Usage) -> list[Any | str]:
+    """Batch mode: run every job in batch rounds, one request per unfinished job per round."""
     # Result per job index.
     results: dict[int, Any | str] = {}
     # Jobs still needing a turn.
@@ -64,20 +99,20 @@ async def run_jobs(client: anthropic.AsyncAnthropic, jobs: list[Job], usage: Usa
             i = int(item.custom_id.split("-")[0].removeprefix("job"))
             # Failed, canceled, or expired requests end their job.
             if item.result.type != "succeeded":
-                results[i] = f"{jobs[i].category}: batch request {item.result.type}"
+                results[i] = f"{jobs[i].label}: batch request {item.result.type}"
                 pending.pop(i, None)
                 continue
             try:
-                # Quotes, or None when another turn is needed.
-                parts = handle_response(jobs[i], item.result.message, usage)
+                # Result, or None when another turn is needed.
+                result = handle_response(jobs[i], item.result.message, usage)
             except WorkerError as e:
                 # Refusal, truncation, or out of turns.
                 results[i] = str(e)
                 pending.pop(i, None)
                 continue
             # Finished jobs leave the pending set.
-            if parts is not None:
-                results[i] = parts
+            if result is not None:
+                results[i] = result
                 pending.pop(i, None)
     # Results in job order.
     return [results[i] for i in range(len(jobs))]

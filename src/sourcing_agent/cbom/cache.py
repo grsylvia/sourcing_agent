@@ -12,7 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 # Quote records.
-from .worker import PartQuotes, PriceBreak, Quote
+from .quotes import PartQuotes, PriceBreak, Quote
 
 
 def quote_key(row: dict, suppliers: list[dict]) -> str:

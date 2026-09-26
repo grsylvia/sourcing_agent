@@ -1,10 +1,10 @@
-"""List prices for estimating run cost (USD; verify at https://platform.claude.com/docs/en/about-claude/pricing)."""
+"""API cost model: list prices, cost of usage, cost ranges, and shared token-size assumptions (USD; verify at https://platform.claude.com/docs/en/about-claude/pricing)."""
 
-# Typed rate records.
+# Typed rate and range records.
 from dataclasses import dataclass
 
 # Usage totals to price.
-from .worker import Usage
+from .agent import Usage
 
 
 # Per-million-token rates for one model.
@@ -57,3 +57,33 @@ def estimate_cost(usage: Usage, model: str, batch: bool = False) -> float | None
         tokens *= BATCH_DISCOUNT
     # Tokens plus search fees.
     return tokens + usage.web_searches * SEARCH_PRICE
+
+
+# Cost range for an estimate.
+@dataclass
+class Range:
+    # Low-case USD.
+    low: float
+    # High-case USD.
+    high: float
+
+    @property
+    def mid(self) -> float:
+        """Midpoint, the value the calibration line is fitted on."""
+        # Average of the bounds.
+        return (self.low + self.high) / 2
+
+
+def money(r: Range) -> str:
+    """Format a cost range as $low–high."""
+    # Two decimals, one dollar sign.
+    return f"${r.low:.2f}–{r.high:.2f}"
+
+
+# Assumed token sizes shared by every worker estimate (calibration corrects them from real runs).
+# System prompt, tools, and task message per conversation.
+PROMPT_TOKENS = 4_000
+# Search-result tokens added to context per web search.
+SEARCH_TOKENS = 3_000
+# Output tokens (thinking, queries, submission) per row, low and high.
+OUTPUT_PER_ROW = (3_000, 8_000)

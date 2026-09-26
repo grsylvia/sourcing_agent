@@ -98,19 +98,33 @@ sourcing run ──▶ run_log.jsonl (actual vs estimate, per pass) ──▶ so
 
 Passes with errored rows are logged but not fitted. Estimates are recomputed from each pass's conversation shape, so changing the token assumptions keeps old runs usable.
 
-## Status
+## Code layout
 
-| Part | State |
+```
+src/sourcing_agent/
+├── cli.py          thin entry point: registers both command sets, maps errors to exit codes
+├── core/           shared engine (imports nothing from cbom/ or suppliers/)
+├── cbom/           CBOM generation (imports core/ only)
+└── suppliers/      supplier management (imports core/ and cbom/)
+```
+
+| Package | Module | Role |
+| --- | --- | --- |
+| `core` | `agent.py` | Agent loop: `Job`, `Usage`, request params, submit-tool handling, live conversation |
+| | `runner.py` | Runs jobs live (4 at a time) or through the Batch API |
+| | `config.py` · `paths.py` · `errors.py` · `web.py` | `suppliers.toml`, project files, errors, domain helpers |
+| | `pricing.py` · `calibration.py` | API cost model and ranges; run log + least-squares fit |
+| `cbom` | `bom.py` | BOM (CSV/.xlsx) in, CBOM out, CBOMs read back |
+| | `quotes.py` | Quote records and the lowest-total price rule |
+| | `worker.py` | Sourcing worker (approved domains only) |
+| | `pipeline.py` · `cache.py` | Batches, cache reuse, Opus 5.5 escalation, CBOM rows |
+| | `estimate.py` · `commands.py` | Pre-run estimate and pass logging; `run`, `estimate` |
+| `suppliers` | `wins.py` | Win rates per supplier and category |
+| | `scout.py` · `screen.py` | Open-web scout; free screening (evidence, HTTPS, RDAP age) |
+| | `trial.py` · `registry.py` | Trial on real rows; candidate registry and approvals |
+| | `commands.py` | `suppliers`, `discover`, `trial`, `candidates` |
+
+| Status | State |
 | --- | --- |
-| Project setup | ✅ |
-| Formats (BOM, suppliers, CBOM) | ✅ [docs/FORMATS.md](docs/FORMATS.md) |
-| Category worker | ✅ `src/sourcing_agent/worker.py` |
-| Orchestrator | ✅ `src/sourcing_agent/orchestrator.py` |
-| CLI | ✅ `src/sourcing_agent/cli.py` |
-| Claude Code skill | ✅ `skill/source-bom/SKILL.md` |
-| Excel BOM input + template | ✅ `templates/bom_template.xlsx` |
-| Cost estimate + Opus 5.5 escalation | ✅ `src/sourcing_agent/estimate.py` |
-| Shared per-category cache prefix | ✅ `src/sourcing_agent/worker.py` |
-| Supplier win rates / pruning | ✅ `src/sourcing_agent/wins.py` |
-| Supplier discovery, screening, trials | ✅ `src/sourcing_agent/discover.py` (tested offline; no live scout yet) |
-| Live run | ⏳ needs `ANTHROPIC_API_KEY` |
+| CBOM generation | ✅ first live run (Arctos, 76 rows) in progress |
+| Supplier discovery | ✅ tested offline; no live scout yet |
