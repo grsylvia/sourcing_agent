@@ -40,7 +40,7 @@ def register(commands, make_estimator: Callable[[list[dict]], Estimator], assume
     learn = commands.add_parser("learn", help="Report what logged runs teach about tokens and cost, and what to change next (no API calls).")
     learn.set_defaults(handler=lambda args: cmd_learn(args, make_estimator, assumed))
     # Run log to read.
-    learn.add_argument("--log", type=Path, default=paths.RUN_LOG_PATH, help="Run log (default: project run_log.jsonl).")
+    learn.add_argument("--log", type=Path, default=paths.RUN_LOG_PATH, help="Run log (default: personal run_log.jsonl).")
 
 
 def cmd_learn(args, make_estimator: Callable[[list[dict]], Estimator], assumed: Profile) -> int:

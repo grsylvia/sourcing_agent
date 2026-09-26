@@ -14,6 +14,8 @@ import anthropic
 
 # Project files.
 from ..core import paths
+# Personal CBOM input locations.
+from ..personal.store import cbom_path
 # Default model and usage totals.
 from ..core.agent import MODEL, Usage
 # Supplier list reader.
@@ -29,7 +31,7 @@ from ..cbom.bom import read_cboms
 # Sourcing-pass estimate, calibration, and logging (trials use the sourcing worker).
 from ..cbom.estimate import learned, log_pass
 # Conversation shapes.
-from ..cbom.pipeline import pass_shape
+from ..cbom.planning import pass_shape
 # Candidate registry.
 from .registry import approve, entry_for, load_registry, record_candidates, record_trial, reject, save_registry
 # Discovery scout.
@@ -50,7 +52,7 @@ def register(commands) -> None:
     sup = commands.add_parser("suppliers", help="Show supplier win rates per category from CBOMs and consistently failing suppliers.")
     sup.set_defaults(handler=cmd_suppliers)
     # Finished CBOMs to count wins in.
-    sup.add_argument("cboms", type=Path, nargs="+", help="One or more CBOM CSVs.")
+    sup.add_argument("cboms", type=cbom_path, nargs="+", help="One or more CBOM CSVs.")
     # Approved supplier list.
     sup.add_argument("--suppliers", type=Path, default=paths.DEFAULT_SUPPLIERS, help="Supplier TOML (default: project suppliers.toml).")
     # Historical search evidence for pruning.
@@ -59,7 +61,7 @@ def register(commands) -> None:
     dis = commands.add_parser("discover", help="Scout the web for new suppliers where CBOM rows went unsourced, and screen them for free.")
     dis.set_defaults(handler=cmd_discover)
     # CBOMs whose gaps pick the categories and example parts.
-    dis.add_argument("cboms", type=Path, nargs="+", help="One or more CBOM CSVs.")
+    dis.add_argument("cboms", type=cbom_path, nargs="+", help="One or more CBOM CSVs.")
     # Categories to scout instead of the ones with gaps.
     dis.add_argument("--category", action="append", help="Scout this category (repeatable); default: categories with not_found/error rows.")
     # Approved supplier list.
@@ -74,7 +76,7 @@ def register(commands) -> None:
     # Candidate to trial.
     tri.add_argument("domain", help="Candidate domain from sourcing candidates.")
     # CBOMs to sample rows from.
-    tri.add_argument("--cbom", type=Path, nargs="+", required=True, help="CBOM CSVs to sample rows from.")
+    tri.add_argument("--cbom", type=cbom_path, nargs="+", required=True, help="CBOM CSVs to sample rows from.")
     # Sample size.
     tri.add_argument("--rows", type=int, default=TRIAL_ROWS, help=f"Rows to sample, unsourced first (default: {TRIAL_ROWS}).")
     # Approved supplier list (currency).

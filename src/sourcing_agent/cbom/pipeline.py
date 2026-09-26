@@ -1,42 +1,27 @@
-"""CBOM pipeline: reuse cached quotes, source the rest in category batches, retry failures on the escalation model, build the CBOM."""
+"""In-memory BOM orchestration: cached quotes, sourcing passes, retries, and price selection."""
 
-# Quote date for the CBOM.
+# Quote dates.
 import datetime
-# Progress lines.
+# Progress messages.
 import logging
-# Run summary record.
+# Whole-run summary record.
 from dataclasses import dataclass
-# File paths.
-from pathlib import Path
-
-# Async Claude client.
-import anthropic
-
-# Models, loop settings, and usage totals.
-from ..core.agent import EFFORT, ESCALATION_MODEL, MAX_TURNS, MODEL, Usage
-# Supplier list and per-category suppliers.
-from ..core.config import category_suppliers, load_suppliers
-# Worker failure type.
-from ..core.errors import WorkerError
-# Provider validation and client factory.
-from ..core.providers import create_client, provider_of, select_models, validate_mode
-# Live and batch runners.
-from ..core.runner import run_jobs
-# Per-conversation learning records.
-from ..learning.runlog import conversation_record
-# BOM and CBOM files.
-from .bom import CBOM_COLUMNS, load_bom, write_cbom
-# Quote cache helpers.
-from .cache import load_cache, lookup, quote_key, save_cache, store
-# Quote records and the price rule.
+# Provider clients and completed-pass observer.
+from typing import Any, Callable
+# Default models and metered usage.
+from ..core.agent import MODEL, ESCALATION_MODEL, Usage
+# Output column contract.
+from .bom import CBOM_COLUMNS
+# Cache successful fresh quotes.
+from .cache import store_parts
+# Shared pass execution and learning facts.
+from .execution import SourcingPass, source_rows
+# Shared planning for execution and estimates.
+from .planning import pass_shape, split_cached
+# Deterministic price selection.
 from .quotes import PartQuotes, pick_lowest
-# Sourcing worker jobs and the settings they run with.
-from .worker import MAX_PAGE_TOKENS, SEARCHES_PER_PART, new_job, prompt_hash
 
-# BOM rows per worker conversation; small batches stop pages being re-read.
-ROWS_PER_WORKER = 2
-
-# Logger for progress lines.
+# Progress for the complete run.
 log = logging.getLogger(__name__)
 
 
@@ -74,132 +59,6 @@ class RunSummary:
     # Retry model actually selected for this run.
     escalation_model: str = ESCALATION_MODEL
 
-
-def make_batches(rows: list[dict]) -> list[tuple[str, list[dict]]]:
-    """Group rows by category, then split each group into worker-sized batches."""
-    # Rows per category, in BOM order.
-    groups: dict[str, list[dict]] = {}
-    for row in rows:
-        groups.setdefault(row["category"], []).append(row)
-    # Fixed-size batches within each category.
-    return [
-        (category, group[i:i + ROWS_PER_WORKER])
-        for category, group in groups.items()
-        for i in range(0, len(group), ROWS_PER_WORKER)
-    ]
-
-
-def pass_shape(rows: list[dict], suppliers: list[dict]) -> list[tuple[int, int]]:
-    """Return (rows, approved suppliers) for each worker conversation these rows would start."""
-    # One entry per batch.
-    return [(len(batch), len(category_suppliers(category, suppliers))) for category, batch in make_batches(rows)]
-
-
-def sourcing_settings(model: str, batch: bool) -> dict:
-    """Settings a sourcing pass runs with, logged so learning can compare them."""
-    # Everything that changes how many tokens a conversation uses.
-    return {
-        "model": model,
-        "provider": provider_of(model),
-        "web_adapter": "responses-v1" if provider_of(model) == "openai" else "messages",
-        "batch": batch,
-        "effort": EFFORT,
-        "max_turns": MAX_TURNS,
-        "rows_per_worker": ROWS_PER_WORKER,
-        "searches_per_part": SEARCHES_PER_PART,
-        "page_tokens": None if provider_of(model) == "openai" else MAX_PAGE_TOKENS,
-        "prompt": prompt_hash(),
-    }
-
-
-def split_cached(rows: list[dict], config: dict, cache: dict, max_age_days: int, today: datetime.date) -> tuple[dict[str, PartQuotes], list[dict], dict[str, str]]:
-    """Return reusable cached quotes by part ID, the rows still to source, and each row's cache key."""
-    # Cache key per part ID.
-    keys = {r["part_id"]: quote_key(r, config["suppliers"]) for r in rows}
-    # Quotes reused from the cache.
-    cached = {r["part_id"]: hit for r in rows if (hit := lookup(cache, keys[r["part_id"]], max_age_days, today))}
-    # Rows the cache does not answer.
-    return cached, [r for r in rows if r["part_id"] not in cached], keys
-
-
-async def source_rows(
-    client: anthropic.AsyncAnthropic,
-    rows: list[dict],
-    config: dict,
-    live: bool,
-    model: str,
-    usage: Usage,
-) -> tuple[dict[str, PartQuotes], dict[str, str], list[dict]]:
-    """Source rows on one model with the config's suppliers; return quotes and errors by part ID, and one learning record per conversation."""
-    # Worker-sized batches by category.
-    batches = make_batches(rows)
-    # Outcome per batch: quotes, or an error message.
-    outcomes: list[list[PartQuotes] | str] = [""] * len(batches)
-    # Jobs that could be set up, with their batch index.
-    jobs = []
-    for i, (category, batch) in enumerate(batches):
-        try:
-            # Tools and first message for this batch.
-            jobs.append((i, new_job(category, batch, config["suppliers"], config["currency"], model)))
-        except WorkerError as e:
-            # No suppliers for the category.
-            outcomes[i] = str(e)
-    # Run the jobs and put each result in its batch slot.
-    for (i, _), result in zip(jobs, await run_jobs(client, [job for _, job in jobs], live, usage)):
-        outcomes[i] = result
-    # One learning record per conversation that ran, with rows quoted as its outcome.
-    conversations = [
-        conversation_record(job, "error", 0) if isinstance(outcomes[i], str)
-        else conversation_record(job, "submitted", sum(bool(p.quotes) for p in outcomes[i]))
-        for i, job in jobs
-    ]
-    # Attach per-row supplier evidence to the conversation learning records.
-    for (i, job), conversation in zip(jobs, conversations):
-        # Approved suppliers and requested rows are recorded even for worker errors.
-        category, batch = batches[i]
-        # Normalize worker failures separately from unsuccessful searches.
-        conversation["supplier_outcomes"] = supplier_evidence(batch, outcomes[i], category_suppliers(category, config["suppliers"]))
-    # Quotes and errors by part ID.
-    parts: dict[str, PartQuotes] = {}
-    errors: dict[str, str] = {}
-    for (category, batch), outcome in zip(batches, outcomes):
-        # A string outcome is an error for every row in the batch.
-        if isinstance(outcome, str):
-            log.warning("%s %s [%s]: error: %s", model, category, ", ".join(r["part_id"] for r in batch), outcome)
-            errors.update({r["part_id"]: outcome for r in batch})
-            continue
-        # Quotes for each row in the batch.
-        parts.update({part.part_id: part for part in outcome})
-    # Results for every row, plus the conversation records.
-    return parts, errors, conversations
-
-
-def supplier_evidence(rows: list[dict], outcome: list[PartQuotes] | str, suppliers: list[dict]) -> list[dict]:
-    """Record attempts, valid quotes, and wins without mistaking missing evidence for failure."""
-    # Results indexed by requested row.
-    parts = {} if isinstance(outcome, str) else {p.part_id: p for p in outcome}
-    # One learning observation per row and approved supplier.
-    observations = []
-    # Keep every requested row, including omitted submissions.
-    for row in rows:
-        # Missing parts have no proven searches.
-        part = parts.get(row["part_id"], PartQuotes(row["part_id"]))
-        # Price-rule winner at this run's BOM quantity.
-        winner = pick_lowest(part, int(row["quantity"]))
-        # Explicit search evidence from the parser.
-        reports = {o["supplier"]: o for o in part.supplier_outcomes}
-        # Record the actual supplier identity and domains used in this pass.
-        for supplier in suppliers:
-            # A worker error is distinct from a supplier search finding nothing.
-            report = reports.get(supplier["name"], {"status": "error" if isinstance(outcome, str) else "not_checked", "reason": outcome if isinstance(outcome, str) else "No search outcome reported"})
-            # Every validated quote counts, including quotes that lose on price.
-            quoted = any(q.vendor == supplier["name"] for q in part.quotes)
-            # Preserve evidence and the winner for later multi-run learning.
-            observations.append({"part_id": row["part_id"], "supplier": supplier["name"], "domains": sorted(supplier["domains"]), "status": "quoted" if quoted else report["status"], "reason": report["reason"], "won": bool(winner and winner.quote.vendor == supplier["name"])})
-    # Structured evidence is stored inside the normal run log.
-    return observations
-
-
 def cbom_row(row: dict, part: PartQuotes | None, error: str | None, currency: str) -> dict:
     """Build one CBOM row from a BOM row and its worker result."""
     # Start with the BOM columns and blank sourcing columns.
@@ -234,7 +93,7 @@ def cbom_row(row: dict, part: PartQuotes | None, error: str | None, currency: st
 
 
 async def source_bom(
-    client: anthropic.AsyncAnthropic,
+    client: Any,
     rows: list[dict],
     config: dict,
     cache: dict,
@@ -243,6 +102,7 @@ async def source_bom(
     escalate: bool = True,
     model: str = MODEL,
     escalation_model: str = ESCALATION_MODEL,
+    on_pass: Callable[[SourcingPass], None] | None = None,
 ) -> RunSummary:
     """Reuse cached quotes, source the rest, retry failed rows on the escalation model, and build the CBOM rows."""
     # First-pass usage.
@@ -265,6 +125,12 @@ async def source_bom(
     # First pass on the default model.
     if todo:
         fresh, errors, first_convs = await source_rows(client, todo, config, live, model, usage)
+        # Retain completed prices before retries or learning writes can fail.
+        store_parts(cache, keys, fresh, today)
+    # Persist completed first-pass evidence before retries or export can fail.
+    if todo and on_pass:
+        # Observers receive facts without controlling price selection.
+        on_pass(SourcingPass("first", model, pass_shape(todo, config["suppliers"]), len(errors), usage, first_convs))
     # First-pass errors, before retries change them.
     first_errors = len(errors)
     # Escalation errors.
@@ -277,6 +143,12 @@ async def source_bom(
         log.info("retrying %d rows on %s", len(retry), escalation_model)
         # Second pass.
         retried, retry_errors, retry_convs = await source_rows(client, retry, config, live, escalation_model, escalation_usage)
+        # Preserve valid retry prices before subsequent persistence steps.
+        store_parts(cache, keys, retried, today)
+        # Retain completed retry evidence independently of export.
+        if on_pass:
+            # The retry has its own model, usage, and failure count.
+            on_pass(SourcingPass("escalation", escalation_model, pass_shape(retry, config["suppliers"]), len(retry_errors), escalation_usage, retry_convs))
         # Merge each retried row.
         for r in retry:
             # Part ID of the retried row.
@@ -293,9 +165,7 @@ async def source_bom(
             else:
                 fresh[pid].notes = "; ".join(filter(None, [fresh[pid].notes, f"{escalation_model} retry: {retry_errors[pid]}"]))
     # Date and cache each fresh result.
-    for pid, part in fresh.items():
-        part.quoted_at = today.isoformat()
-        store(cache, keys[pid], part)
+    store_parts(cache, keys, fresh, today)
     # All results by part ID.
     parts.update(fresh)
     # CBOM rows in BOM order.
@@ -306,40 +176,3 @@ async def source_bom(
         pass_shape(todo, config["suppliers"]), pass_shape(retry, config["suppliers"]), first_errors, len(retry_errors),
         first_convs, retry_convs, config["currency"], reused, not live, model, escalation_model,
     )
-
-
-async def run_sourcing(
-    bom_path: Path,
-    suppliers_path: Path,
-    out_path: Path,
-    cache_path: Path,
-    max_age_days: int = 7,
-    live: bool = False,
-    escalate: bool = True,
-    provider: str = "anthropic",
-    model: str | None = None,
-    escalation_model: str | None = None,
-) -> RunSummary:
-    """Load inputs, source the BOM, save the quote cache, and write the CBOM."""
-    # Resolve models and reject unsupported modes before creating a client.
-    model, escalation_model = select_models(provider, model, escalation_model)
-    # Never silently change the requested mode or cost.
-    validate_mode(provider, live)
-    # Approved suppliers and categories.
-    config = load_suppliers(suppliers_path)
-    # Checked BOM rows.
-    rows = load_bom(bom_path, config["categories"])
-    # Previously gathered quotes.
-    cache = load_cache(cache_path)
-    # One client shared by all workers.
-    async with create_client(provider) as client:
-        try:
-            # Source every row.
-            summary = await source_bom(client, rows, config, cache, max_age_days, live, escalate, model, escalation_model)
-        finally:
-            # Keep whatever was quoted, even if the run stopped early.
-            save_cache(cache_path, cache)
-    # Save the CBOM.
-    write_cbom(out_path, summary.rows)
-    # Rows and usage for the caller.
-    return summary

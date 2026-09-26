@@ -1,1 +1,1 @@
-"""CBOM generation: BOM in, lowest-price quotes from approved suppliers, CBOM out. Depends on core only."""
+"""BOM planning, pass execution, deterministic price selection, learning, and CBOM export."""

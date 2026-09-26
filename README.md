@@ -11,6 +11,7 @@ suppliers.toml ◀── you approve ◀── trial on real rows ◀── free
 
 | Ability | Skill | Commands |
 | --- | --- | --- |
+| Personal startup | `/source-bom` | `startup`, `memory` ([guide](docs/PERSONAL_SETUP.md)) |
 | BOM → CBOM | `/source-bom` | `estimate`, `run`, `suppliers` |
 | Find and verify suppliers | `/find-suppliers` | `discover`, `trial`, `candidates` ([docs/DISCOVERY.md](docs/DISCOVERY.md)) |
 
@@ -27,6 +28,10 @@ suppliers.toml ◀── you approve ◀── trial on real rows ◀── free
 ## Usage
 
 ```
+# Inspect folder choices and current suppliers/discovery sources without API calls.
+sourcing startup
+# Initialize chosen folders; acknowledge sources separately after reviewing the displayed revision.
+sourcing startup --templates ~/sourcing --boms ~/sourcing --cboms ~/sourcing
 sourcing estimate my_bom.xlsx --compare  # compare providers and supported modes (no API calls)
 sourcing estimate my_bom.xlsx --provider openai --model gpt-6-luna
 sourcing run my_bom.xlsx --provider openai --model gpt-6-sol --live
@@ -43,7 +48,7 @@ sourcing learn                           # what logged runs teach: spend by mete
 | BOM input | Detail |
 | --- | --- |
 | CSV | [`examples/bom.csv`](examples/bom.csv) |
-| Excel | Copy [`templates/bom_template.xlsx`](templates/bom_template.xlsx), fill the `BOM` sheet |
+| Excel | Copy [`templates/bom_template.xlsx`](templates/bom_template.xlsx) to your chosen template folder, fill the `BOM` sheet |
 
 | Flag | Effect |
 | --- | --- |
@@ -58,14 +63,29 @@ sourcing learn                           # what logged runs teach: spend by mete
 
 | Output | Detail |
 | --- | --- |
-| `cbom.csv` | BOM + vendor + pricing ([docs/FORMATS.md](docs/FORMATS.md)) |
-| `quote_cache.json` | Reused quotes (local, gitignored) |
-| `run_log.jsonl` | Actual vs estimated cost per pass, for calibration (local, gitignored) |
-| `supplier_candidates.json` | Discovered suppliers, screening, trials, status (local, gitignored) |
+| `<bom>_cbom.csv` | Saved CBOM folder (home before setup); BOM + vendor + pricing ([docs/FORMATS.md](docs/FORMATS.md)) |
+| `quote_cache.json` | Reused quotes (personal profile, outside Git) |
+| `run_log.jsonl` | Actual vs estimated cost per pass, for calibration (personal profile, outside Git) |
+| `supplier_candidates.json` | Discovered suppliers, screening, trials, status (personal profile, outside Git) |
 | Summary | Rows by status, cache reuse, parts total, tokens and cost per model |
 | Exit code | `0` ok · `1` some rows errored · `2` bad input or credentials |
 
 In Claude Code: `/source-bom` and `/find-suppliers` (each linked from `skill/<name>/` into `~/.claude/skills/`).
+
+## Personal memory
+
+On first skill use, initialize folders and review suppliers and discovery sources using the [startup sequence](docs/PERSONAL_SETUP.md); `~/sourcing/` is suggested. Existing folder choices are reused. Bare input/output names use saved folders; `./file.csv` or absolute paths override them. Without skill setup, CLI folders default to home.
+
+| Local file | Purpose |
+| --- | --- |
+| `memory.json` | Folder choices, user-specific facts/preferences, and acknowledged source revision; shared rules belong in skills/code or `AGENTS.md` |
+| `run_log.jsonl` | API-pass cost, quote outcomes, supplier reliability; automatically used by estimates and `sourcing learn` |
+| `events.jsonl` | Command outcomes, including failures before API work; summarized by `sourcing memory` |
+| `quote_cache.json`, `supplier_candidates.json` | Personal quote reuse and supplier discovery state |
+
+All live under `~/.local/share/sourcing-agent/`, outside Git. OS accounts have separate memory. Set `SOURCING_AGENT_HOME` to choose another private profile (including for people sharing an OS account). Skills review history before paid work and results afterward; reusable fixes belong in shared code/skills, while personal notes must describe the user's choices or environment. Code records safe outcomes automatically, excluding raw exception text and credentials.
+
+Existing checkout logs are not automatically imported: copy only your own local data into an empty profile, keeping the originals. `sourcing memory` shows the active profile and setup status; it makes no API calls. The approved supplier list remains in the checkout.
 
 ## Estimated cost
 
@@ -112,36 +132,16 @@ Profiles and run-estimate calibration are pooled only within the selected provid
 
 ## Code layout
 
-```
-src/sourcing_agent/
-├── cli.py          thin entry point: registers both command sets, maps errors to exit codes
-├── core/           shared engine (imports nothing else in the package)
-├── learning/       run-by-run learning for token and cost minimization (imports core/ only)
-├── cbom/           CBOM generation (imports core/, learning/)
-└── suppliers/      supplier management (imports core/, learning/, cbom/)
-```
+| Area | Responsibility |
+| --- | --- |
+| `cli.py` | Command composition, errors and safe command events |
+| `core/` | Providers, bounded execution, pricing, configuration and atomic storage |
+| `personal/` | Per-user folder choices, lessons and outcome history |
+| `learning/` | Cost calibration, token profiles and supplier reliability |
+| `cbom/` | Planning → pass execution → orchestration → export; separate service and reports |
+| `suppliers/` | Discovery, outside verification, screening, trials and approval |
 
-| Package | Module | Role |
-| --- | --- | --- |
-| `core` | `agent.py` | Agent loop: `Job`, `Usage`, request params, submit-tool handling, live conversation |
-| | `runner.py` | Runs jobs live (4 at a time) or through the Batch API |
-| | `config.py` · `paths.py` · `errors.py` · `web.py` | `suppliers.toml`, project files, errors, domain helpers |
-| | `pricing.py` | API cost model, cost ranges, shared token-size assumptions |
-| `learning` | `runlog.py` | Every API pass and its conversations: settings tag, usage by meter, turns, rows quoted, estimate, actual cost |
-| | `profile.py` | Token profile learned from conversations (p25–p90), per model, replacing guessed constants at ≥5 conversations |
-| | `regression.py` | Estimated-vs-actual least-squares fit |
-| | `calibration.py` | Corrects estimates with the fit (estimator injected by the worker); per-pass comparison |
-| | `report.py` · `commands.py` | `sourcing learn`: spend by settings, meter, category, conversation; recommendations |
-| `cbom` | `bom.py` | BOM (CSV/.xlsx) in, CBOM out, CBOMs read back |
-| | `quotes.py` | Quote records and the lowest-total price rule |
-| | `worker.py` | Sourcing worker (approved domains only) |
-| | `pipeline.py` · `cache.py` | Batches, cache reuse, Opus 5.5 escalation, CBOM rows |
-| | `estimate.py` · `commands.py` | Sourcing estimator (calibrated by `learning`); `run`, `estimate` |
-| `learning` | `suppliers.py` | Supplier outcomes; ≥3 consecutive failing first-pass runs with ≥5 checked rows each before recommending a drop |
-| `suppliers` | `wins.py` | CBOM win rates plus failure evidence from the learning log |
-| | `scout.py` · `screen.py` | Open-web scout; free screening (evidence, HTTPS, RDAP age) |
-| | `trial.py` · `registry.py` | Trial on real rows; candidate registry and approvals |
-| | `commands.py` | `suppliers`, `discover`, `trial`, `candidates` |
+[Architecture and failure boundaries](docs/ARCHITECTURE.md) explain the dependency rules and persistence behavior. Completed sourcing passes are logged before retries/export; fully cached runs need no API client. Failed CSV/JSON serialization preserves the previous file.
 
 | Status | State |
 | --- | --- |

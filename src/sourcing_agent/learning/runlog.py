@@ -13,6 +13,8 @@ from dataclasses import asdict
 # File paths.
 from pathlib import Path
 
+# Shared append-only persistence.
+from ..core.storage import append_jsonl, read_jsonl
 # Job and usage totals.
 from ..core.agent import Job, Usage
 # Cost model.
@@ -36,28 +38,15 @@ def conversation_record(job: Job, outcome: str, quoted_rows: int) -> dict:
 
 
 def append_run(path: Path, record: dict) -> None:
-    """Append one pass record to the run log."""
-    # One JSON object per line.
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
+    """Append one pass record without interleaving concurrent writers."""
+    # Keep completed-pass evidence append-only.
+    append_jsonl(path, record)
 
 
 def load_runs(path: Path) -> list[dict]:
-    """Read every pass record, skipping unreadable lines."""
-    # No log yet.
-    if not path.exists():
-        return []
-    # Parsed records.
-    records = []
-    # One record per non-blank line.
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError:
-            # A damaged line is ignored.
-            continue
-    # All readable records.
-    return records
+    """Read intact pass records, preserving older record formats."""
+    # Shared parsing skips damaged and non-object lines.
+    return read_jsonl(path)
 
 
 def record_pass(

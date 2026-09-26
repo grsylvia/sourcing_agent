@@ -1,48 +1,69 @@
 # Sourcing Agent
 
-Takes a BOM, sources each category from approved suppliers, and returns a CBOM (BOM + vendor + pricing).
+Turn a validated BOM into a costed BOM using approved suppliers. Preserve evidence, minimize repeat API work, and let the user control supplier changes.
 
-# Decisions
+## Working rules
 
-| Topic | Decision |
+- Make all repository changes on `cost-optimizations`; do not edit `main` or create branches without the user's instruction.
+- Complete authorized work within scope. Ask only for missing decisions or authorization that the task actually requires.
+- Preserve existing personal data and uncommitted work. Never commit credentials, `.env`, BOMs, or personal memory.
+- Keep Markdown concise; use tables for mappings and decisions.
+- Comment generated code/configuration with one short comment immediately above each statement or setting.
+- Run relevant offline tests with isolated personal storage. No paid API runs unless authorized.
+
+## First principles
+
+| Principle | Implementation rule |
 | --- | --- |
-| Runtime | Local Python on Anthropic Messages or OpenAI Responses (`anthropic`, `openai` SDKs) |
-| Code layout | `core/` shared engine, `learning/` run-by-run learning, `cbom/` CBOM generation, `suppliers/` supplier management; imports flow `suppliers → cbom → learning → core` only |
-| Learning goal | `learning/` exists for token minimization and cost optimization; it learns from every logged API pass |
-| Learning data | Each pass logs its settings (ID + prompt hash) and one record per conversation (usage by meter, turns, rows quoted, per-row supplier identities/domains, search outcomes/reasons, wins); older totals-only records stay usable |
-| Token profile | Estimator uses a profile learned per model from ≥5 conversations (p25–p90), else pooled within provider, else the assumed constants |
-| Fan-out | Code splits the BOM by category; one worker per category, run in parallel |
-| Supplier lock | Worker web search/fetch restricted to approved supplier domains (`allowed_domains`) |
-| Vendor selection | Workers return quotes; code picks the lowest price |
-| Interface | CLI, run by Claude through a Claude Code skill |
-| Price rule | Lowest total at BOM qty (price breaks, pack size, MOQ); shipping excluded |
-| Formats | BOM CSV or .xlsx (template in `templates/`), `suppliers.toml`, CBOM CSV ([docs/FORMATS.md](docs/FORMATS.md)) |
-| Model | Anthropic default `claude-sonnet-5`; OpenAI default `gpt-6-sol` (Luna/Astra selectable); effort `medium`; no refusal fallback |
-| Escalation | Rows left `not_found` / `error` retried once on selected provider: Opus 5.5 or GPT-6 Astra by default; `--escalation-model` overrides; `--no-escalate` skips |
-| Token use | 2 rows per worker, 15K-token page cap, prompt caching, usage + cost per run |
-| Shared cache prefix | Tools + system + category instructions byte-identical per category, cache breakpoint before the per-batch rows |
-| Supplier pruning | `sourcing suppliers <cbom>…` uses learning history: ≥3 consecutive first-pass runs with ≥5 explicitly checked rows each and no valid quotes; errors/unchecked rows or smaller samples break the streak, any valid quote resets it; zero wins alone never qualifies; user picks drops; retain ≥1 supplier per category |
-| Supplier discovery | Separate ability (`/find-suppliers`, `sourcing discover`): one open-web scout per category with unsourced rows; loads `docs/SUPPLIER_SOURCES.md`, saves dated outside evidence and flags incomplete checks/concerns; proposals only ([docs/DISCOVERY.md](docs/DISCOVERY.md)) |
-| Supplier verification | Free screen (own-domain priced evidence, HTTPS, login-free prices, ships to US, RDAP age) → trial on real CBOM rows → user approval (`sourcing candidates --approve`) |
-| Run mode | Anthropic Batch API by default (50% off); `--live` for fast runs; OpenAI requires `--live` |
-| Run gate | Skill asks provider/model with cost comparison, supported mode, retry model, quote freshness, output path (with estimates), then a final Run / Cancel confirmation |
-| Cost estimate | `sourcing estimate --compare` compares providers on shared assumptions; selected-provider estimate before each run: rows, cache hits, suppliers per category, mode, model; no API calls |
-| Cost calibration | `learning/`: each sourcing or trial pass logs actual vs estimated cost to `run_log.jsonl`; `regression.py` fits `actual = β0 + β1 × estimate` (least squares; ratio fit under 3 clean passes; errored passes excluded) |
-| Quote reuse | `quote_cache.json`, rows reused up to `--max-age` days (default 7); keyed by part + suppliers, not quantity |
+| Code owns decisions | Models find quotes; validation and lowest-total selection stay deterministic |
+| Evidence before conclusions | A missing quote, worker error, unchecked supplier, and price loss are different observations |
+| One plan | Estimates and execution share category batching and cache selection in `cbom/planning.py` |
+| Small boundaries | CLI parses/renders; services coordinate files and API lifecycle; pipelines operate on supplied data |
+| Paid work leaves evidence | Persist each completed sourcing pass before retry/export; rendering must not write learning records |
+| Private learning | Each user's local history informs estimates and review; it does not train model weights or authorize changes |
+| Safe local writes | Replace complete snapshots atomically; append learning/events under a writer lock |
+| Honest unknowns | Interrupted requests and incomplete outside verification must remain unknown, not inferred failures |
 
-# Project resources
+## Architecture
 
-| Resource | Use |
+| Area | Owns | Dependencies |
+| --- | --- | --- |
+| `core/` | Provider adapters, job runner, pricing, config, paths, storage primitives | No other project package |
+| `learning/` | Pass records, token profiles, calibration, supplier failure history | `core` |
+| `personal/` | Folder preferences, explicit lessons, safe command outcomes | `core` |
+| `cbom/` | BOM/quote contracts, planning, execution, orchestration, exports, estimates | `core`, `learning`; command adapter also uses `personal` |
+| `suppliers/` | Discovery, outside evidence, screening, registry, trials | `core`, `learning`, `cbom`; command adapter also uses `personal` |
+| `cli.py` | Command composition, errors, exit status, command event recording | Command adapters |
+
+Within `cbom/`: `commands → service → pipeline → execution → planning`; `estimate → planning`; `report` renders facts. Domain and planning modules must not import CLI commands or services. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Behavioral contracts
+
+| Topic | Contract |
 | --- | --- |
-| [Claude API docs](https://docs.claude.com/) | Messages API, tool use, web search/fetch |
+| Inputs/outputs | CSV or `.xlsx` BOM → CSV CBOM; preserve [docs/FORMATS.md](docs/FORMATS.md) and existing CLI commands |
+| Price | Lowest order total at BOM quantity, including packs, MOQ and price breaks; shipping excluded |
+| Domain lock | Production workers use approved domains; discovery alone searches the open web |
+| Workload | Category batches of two rows; live concurrency is bounded by the runner |
+| Providers | Anthropic Messages: batch default or live; OpenAI Responses: live only; no silent provider/mode fallback |
+| Models | Defaults and selectable models live in `core/providers.py`; prices in `core/pricing.py`; do not duplicate these policies |
+| Retry | Failed/not-found rows get at most one stronger-model pass within the selected provider; `--no-escalate` disables it |
+| Cache | Valid quotes reused up to seven days by default; no credentials/client needed when every row is cached; never count reuse as supplier failure evidence |
+| Learning | Freeze pre-run estimates; persist completed passes with settings, usage, conversations and supplier outcomes; isolate provider calibration |
+| Supplier drops | User selection only after ≥3 consecutive first passes with ≥5 checked rows each and no valid quotes; any valid quote resets; errors, unchecked rows and smaller samples break the streak; retain ≥1 supplier/category |
+| Discovery | Use [docs/SUPPLIER_SOURCES.md](docs/SUPPLIER_SOURCES.md); retain dated outside evidence and concerns; missing reviews mean unknown |
+| Approval | Screen → trial on real rows → user approval; skipping a trial requires explicit user authorization |
+| Run authorization | Skills show estimates and confirm paid work; reuse choices and authorization already supplied by the user |
 
-# Project guidance
+## Personal setup and memory
 
-- Work step by step and only move forward on the user's command. When the user shares a goal or context, acknowledge it and wait.
-- Code generation is user-driven. Keep changes within the user's instructions; do not add features or expand scope.
-- The agent is responsible for writing and modifying the project code.
-- Comment generated code and configuration: one short comment immediately above each statement or setting, at most one sentence on one line.
-- Markdown documentation must be concise, simple, and light on text. Prefer tables and visualizations over paragraphs.
-- All Windows exports must go to the user's OneDrive Documents folder.
-- Work on and push to `main`. Ask before creating any new branch.
-- Never commit API keys or `.env` files.
+- Follow [docs/PERSONAL_SETUP.md](docs/PERSONAL_SETUP.md): read memory, initialize missing folders, and review the current suppliers and discovery sources with the user before paid work.
+- Copy `templates/bom_template.xlsx` into the chosen template folder only if absent. Bare filenames use saved folders; explicit paths override them.
+- Personal files live in `~/.local/share/sourcing-agent/` or `SOURCING_AGENT_HOME`, separate from Git and shared across checkouts for that user.
+- Review `sourcing learn` and saved outcomes before paid work. Personal memory holds only user-specific choices and local facts; shared rules and reusable fixes belong in skills/code, branch policy in AGENTS.md. Code records safe command outcomes separately.
+- Keep credentials and raw exception text out of command events. Import historical files only when identified as that user's own data.
+- OS accounts are separate by default; people sharing an account need separate `SOURCING_AGENT_HOME` directories.
+
+## Validation
+
+Run `.venv/bin/python -m unittest discover -s tests -v` with `SOURCING_AGENT_HOME` set to a temporary directory. Test boundary behavior: prices, supplier restrictions, retries, provider attribution, cache-only runs, failure persistence, personal isolation and file formats. Use mocked API boundaries; keep the real serialization test offline.

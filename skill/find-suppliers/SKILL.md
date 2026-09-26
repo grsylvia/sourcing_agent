@@ -5,17 +5,21 @@ description: Find, verify, and approve new suppliers for the sourcing agent (sco
 
 # Find suppliers
 
-Runs `~/sourcing_agent` discovery (Claude Messages API). Scouts and trials spend API credits. Design: `~/sourcing_agent/docs/DISCOVERY.md`. The scout loads [SUPPLIER_SOURCES.md](../../docs/SUPPLIER_SOURCES.md) for outside research; use the same guide for manual discovery.
+Runs `<repo>` discovery (Claude Messages API). Scouts and trials spend API credits. Design: `<repo>/docs/DISCOVERY.md`. The scout loads [SUPPLIER_SOURCES.md](../../docs/SUPPLIER_SOURCES.md) for outside research; use the same guide for manual discovery.
 
 | Need | Detail |
 | --- | --- |
-| Credentials | `ANTHROPIC_API_KEY` (load with `. ~/.config/anthropic/env` if unset) |
+| Credentials | `ANTHROPIC_API_KEY` for paid scouts and trials |
 | Input | One or more CBOM CSVs (their `not_found` / `error` rows pick the categories) |
-| Registry | `~/sourcing_agent/supplier_candidates.json` (never edit by hand) |
+| Registry | Personal profile `supplier_candidates.json` (never edit by hand) |
+
+## Startup and memory
+
+Follow [PERSONAL_SETUP.md](../../docs/PERSONAL_SETUP.md) before discovery: initialize missing personal folders and obtain review of configured suppliers and discovery sources. Reuse existing folder choices and source acknowledgment. Resolve bare CBOM filenames against the saved output folder.
 
 ## Steps
 
-1. **Plan.** Run `~/sourcing_agent/.venv/bin/sourcing discover <cbom.csv>… --estimate` (free). It lists categories with gaps, free leads from BOM notes, and batch vs live cost.
+1. **Plan.** Run `sourcing discover <cbom.csv>… --estimate` (free). It lists categories with gaps, free leads from BOM notes, and batch vs live cost.
 2. **Ask** in one AskUserQuestion call: categories to scout (multiSelect, gap counts in labels) and mode (Batch (Recommended) vs Live, with the estimates).
 3. **Confirm.** Show categories, mode, estimate; ask "Scout now?" (Run / Cancel). Run only on Run.
 4. **Scout** in the background: `sourcing discover <cbom.csv>… [--category C]… [--live]`.

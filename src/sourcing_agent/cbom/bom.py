@@ -12,6 +12,8 @@ import openpyxl
 # Unsupported workbook errors.
 from openpyxl.utils.exceptions import InvalidFileException
 
+# Atomic CBOM exports preserve the last usable output on failure.
+from ..core.storage import atomic_text
 # Error for bad input files.
 from ..core.errors import InputError
 
@@ -110,10 +112,8 @@ def load_bom(path: Path, categories: list[str]) -> list[dict]:
 
 def write_cbom(path: Path, rows: list[dict]) -> None:
     """Write the CBOM rows to a CSV file."""
-    # Create the output folder if needed.
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Write header and rows.
-    with path.open("w", newline="", encoding="utf-8") as f:
+    # Replace the destination only after every row is serialized.
+    with atomic_text(path) as f:
         writer = csv.DictWriter(f, fieldnames=CBOM_COLUMNS)
         writer.writeheader()
         writer.writerows(rows)

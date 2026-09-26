@@ -12,3 +12,9 @@ quote_cache.json
 run_log.jsonl
 # Local registry of discovered suppliers (grows with each discovery).
 supplier_candidates.json
+# Personal preferences and source-review acknowledgments.
+memory.json
+# Local command-outcome history.
+events.jsonl
+# Personal preference writer lock.
+memory.lock

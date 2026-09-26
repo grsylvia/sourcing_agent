@@ -28,7 +28,7 @@ from .bom import load_bom
 # Quote cache reader.
 from .cache import load_cache
 # Conversation shapes, cache split, and the settings a pass runs with.
-from .pipeline import pass_shape, sourcing_settings, split_cached
+from .planning import pass_shape, sourcing_settings, split_cached
 # Sourcing worker limits.
 from .worker import MAX_PAGE_TOKENS, SEARCHES_PER_PART
 

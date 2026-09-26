@@ -11,6 +11,9 @@ from dataclasses import asdict
 # File paths.
 from pathlib import Path
 
+# Atomic local snapshots.
+from ..core.storage import write_json
+
 # Quote records.
 from .quotes import PartQuotes, PriceBreak, Quote
 
@@ -40,8 +43,8 @@ def load_cache(path: Path) -> dict:
 
 def save_cache(path: Path, cache: dict) -> None:
     """Write the cache file."""
-    # Readable JSON, one run's worth at a time.
-    path.write_text(json.dumps(cache, indent=1))
+    # Keep the previous cache intact if serialization fails.
+    write_json(path, cache)
 
 
 def lookup(cache: dict, key: str, max_age_days: int, today: datetime.date) -> PartQuotes | None:
@@ -65,3 +68,13 @@ def store(cache: dict, key: str, part: PartQuotes) -> None:
     # Only successful rows are worth reusing.
     if part.quotes:
         cache[key] = asdict(part)
+
+
+def store_parts(cache: dict, keys: dict[str, str], parts: dict[str, PartQuotes], today: datetime.date) -> None:
+    """Date completed results and retain their successful quotes immediately."""
+    # Empty results remain uncached so later runs can retry them.
+    for pid, part in parts.items():
+        # Use the sourcing run's date consistently across passes.
+        part.quoted_at = today.isoformat()
+        # Reuse the cache's successful-quotes-only policy.
+        store(cache, keys[pid], part)

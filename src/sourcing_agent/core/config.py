@@ -11,10 +11,26 @@ from .errors import InputError
 
 def load_suppliers(path: Path) -> dict:
     """Read suppliers.toml and check its required keys."""
-    # Parse the TOML file.
+    # Read one snapshot for parsing and validation.
     try:
-        config = tomllib.loads(path.read_text())
-    except (OSError, tomllib.TOMLDecodeError) as e:
+        # Decode supplier configuration consistently across commands.
+        content = path.read_text(encoding="utf-8")
+    # Preserve the input-error contract for unreadable files.
+    except (OSError, UnicodeError) as e:
+        raise InputError(f"cannot read {path}: {e}") from e
+    # Share validation with startup's source snapshot.
+    return parse_suppliers(content, path)
+
+
+def parse_suppliers(content: str, path: Path) -> dict:
+    """Validate an already-read supplier snapshot without reading it again."""
+    # Parse the same text the caller will display or hash.
+    try:
+        # Decode the approved supplier configuration.
+        config = tomllib.loads(content)
+    # Report malformed TOML through the normal CLI input error.
+    except tomllib.TOMLDecodeError as e:
+        # Include the selected source for repair.
         raise InputError(f"cannot read {path}: {e}") from e
     # Top-level keys the run needs.
     for key in ("currency", "categories", "suppliers"):

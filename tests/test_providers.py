@@ -47,7 +47,7 @@ from sourcing_agent.cbom.worker import new_job
 # Learned estimates and provider isolation.
 from sourcing_agent.cbom.estimate import learned, sourcing_estimator
 # Run summary output and logging.
-from sourcing_agent.cbom.commands import print_run
+from sourcing_agent.cbom.report import print_run
 # Pass logging with normalized usage.
 from sourcing_agent.learning.runlog import record_pass
 # Cost range for synthetic log records.
@@ -221,7 +221,9 @@ class ProviderTests(unittest.TestCase):
         # Exercise the real SDK and shared runner asynchronously.
         async def run():
             # The mock transport is the only transport available to this client.
-            async with openai.AsyncOpenAI(api_key="offline-test", http_client=openai.DefaultAsyncHttpxClient(transport=httpx2.MockTransport(transport))) as client:
+            async with openai.AsyncOpenAI(api_key="offline-test", max_retries=0, http_client=openai.DefaultAsyncHttpxClient(transport=httpx2.MockTransport(transport), trust_env=False)) as client:
+                # Keep SDK platform metadata deterministic without host-probing threads.
+                client._platform = "Linux"
                 # Return the parsed quotes from the real SDK boundary.
                 return await run_jobs(client, [job()], True, Usage())
         # A valid result proves request serialization and response decoding agree.
