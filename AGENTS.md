@@ -11,6 +11,12 @@ Takes a BOM, sources each category from approved suppliers, and returns a CBOM (
 | Supplier lock | Worker web search/fetch restricted to approved supplier domains (`allowed_domains`) |
 | Vendor selection | Workers return quotes; code picks the lowest price |
 | Interface | CLI, run by Claude through a Claude Code skill |
+| Price rule | Lowest total at BOM qty (price breaks, pack size, MOQ); shipping excluded |
+| Formats | BOM CSV, `suppliers.toml`, CBOM CSV ([docs/FORMATS.md](docs/FORMATS.md)) |
+| Model | `claude-sonnet-5`, effort `medium`; no refusal fallback (not on Batch API) |
+| Token use | 2 rows per worker, 15K-token page cap, prompt caching, usage + cost per run |
+| Run mode | Batch API by default (50% off); `--live` for full-price fast runs |
+| Quote reuse | `quote_cache.json`, rows reused up to `--max-age` days (default 7); keyed by part + suppliers, not quantity |
 
 # Project resources
 

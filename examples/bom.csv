@@ -1,0 +1,7 @@
+part_id,description,category,quantity,spec,mfr_part_number,notes
+F-001,M3x8 socket head cap screw,fasteners,40,"ISO 4762, A2 stainless",,
+F-002,M3 hex nut,fasteners,40,"ISO 4032, A2 stainless",,
+B-001,608ZZ ball bearing,bearings,6,"8x22x7 mm, double shielded",,
+M-001,GT2 timing belt,motion,2,"6 mm wide, 2 mm pitch, 1 m",,
+S-001,NEMA 17 stepper motor,motors,2,"1.8 deg, 45 N·cm holding torque",,
+E-001,TMC2209 stepper driver,electronics,2,UART stepper driver module,,

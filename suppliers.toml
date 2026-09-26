@@ -1,0 +1,68 @@
+# Currency every quote is reported in.
+currency = "USD"
+
+# Category names a BOM row may use; one worker runs per category.
+categories = ["fasteners", "bearings", "motion", "motors", "electronics", "other"]
+
+# McMaster-Carr: industrial hardware.
+[[suppliers]]
+# Name written to the CBOM vendor column.
+name = "McMaster-Carr"
+# Domains the worker may search and fetch.
+domains = ["mcmaster.com"]
+# Categories this supplier is searched for.
+categories = ["fasteners", "bearings", "motion", "other"]
+
+# Misumi: fasteners, bearings, and motion components.
+[[suppliers]]
+# Name written to the CBOM vendor column.
+name = "Misumi"
+# Domains the worker may search and fetch.
+domains = ["misumi-ec.com"]
+# Categories this supplier is searched for.
+categories = ["fasteners", "bearings", "motion"]
+
+# Bolt Depot: fasteners.
+[[suppliers]]
+# Name written to the CBOM vendor column.
+name = "Bolt Depot"
+# Domains the worker may search and fetch.
+domains = ["boltdepot.com"]
+# Categories this supplier is searched for.
+categories = ["fasteners"]
+
+# Digi-Key: electronics and motors.
+[[suppliers]]
+# Name written to the CBOM vendor column.
+name = "Digi-Key"
+# Domains the worker may search and fetch.
+domains = ["digikey.com"]
+# Categories this supplier is searched for.
+categories = ["electronics", "motors"]
+
+# Mouser: electronics and motors.
+[[suppliers]]
+# Name written to the CBOM vendor column.
+name = "Mouser"
+# Domains the worker may search and fetch.
+domains = ["mouser.com"]
+# Categories this supplier is searched for.
+categories = ["electronics", "motors"]
+
+# Amazon: general marketplace.
+[[suppliers]]
+# Name written to the CBOM vendor column.
+name = "Amazon"
+# Domains the worker may search and fetch.
+domains = ["amazon.com"]
+# Categories this supplier is searched for.
+categories = ["fasteners", "bearings", "motion", "motors", "electronics", "other"]
+
+# AliExpress: general marketplace.
+[[suppliers]]
+# Name written to the CBOM vendor column.
+name = "AliExpress"
+# Domains the worker may search and fetch.
+domains = ["aliexpress.com", "aliexpress.us"]
+# Categories this supplier is searched for.
+categories = ["fasteners", "bearings", "motion", "motors", "electronics", "other"]

@@ -21,6 +21,11 @@ dependencies = [
     "anthropic",
 ]
 
+# Console commands installed with the package.
+[project.scripts]
+# The sourcing CLI.
+sourcing = "sourcing_agent.cli:main"
+
 # Tell setuptools where the package source lives.
 [tool.setuptools.packages.find]
 # Source code sits under src/.
