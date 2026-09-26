@@ -10,17 +10,18 @@ Runs `~/sourcing_agent` (Claude Messages API). Each run spends API credits.
 | Need | Detail |
 | --- | --- |
 | Credentials | `ANTHROPIC_API_KEY` set in the environment |
-| BOM format | CSV per `~/sourcing_agent/docs/FORMATS.md` |
+| BOM format | `.xlsx` or CSV per `~/sourcing_agent/docs/FORMATS.md` |
+| BOM template | `~/sourcing_agent/templates/bom_template.xlsx` (fill the `BOM` sheet) |
 | Suppliers | `~/sourcing_agent/suppliers.toml` |
 
 ## Steps
 
-1. **Check the BOM.** If it is not in the FORMATS.md columns, offer to convert it into a new CSV (never overwrite the original). Categories must match `suppliers.toml`.
+1. **Check the BOM.** A filled-in `bom_template.xlsx` (or any `.xlsx` with a `BOM` sheet in the FORMATS.md columns) runs as-is. If the user has no BOM, copy the template for them to fill (Windows: into OneDrive Documents). If the file is not in the FORMATS.md columns, offer to convert it into a new file (never overwrite the original). Categories must match `suppliers.toml`.
 2. **Confirm cost.** Tell the user the row count and estimate (~$0.08–0.29 per new row in batch mode, ~$0.13–0.53 with `--live`; cached rows are free), then wait for a go-ahead.
 3. **Run** in the background (batch mode usually takes under 1 h, up to 24 h):
 
    ```
-   ~/sourcing_agent/.venv/bin/sourcing run <bom.csv> --out <cbom.csv>
+   ~/sourcing_agent/.venv/bin/sourcing run <bom.xlsx|bom.csv> --out <cbom.csv>
    ```
 
    Add `--live` only if the user needs results fast (full price). Add `--max-age 0` to force fresh quotes.

@@ -19,6 +19,8 @@ requires-python = ">=3.12"
 dependencies = [
     # Official Anthropic SDK for the Claude Messages API.
     "anthropic",
+    # Reads .xlsx BOMs.
+    "openpyxl",
 ]
 
 # Console commands installed with the package.

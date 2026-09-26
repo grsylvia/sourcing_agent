@@ -37,8 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     # The run subcommand.
     run = commands.add_parser("run", help="Source a BOM and write a CBOM CSV.")
-    # BOM CSV to source.
-    run.add_argument("bom", type=Path, help="BOM CSV (see docs/FORMATS.md).")
+    # BOM CSV or .xlsx to source.
+    run.add_argument("bom", type=Path, help="BOM CSV or .xlsx (see docs/FORMATS.md).")
     # Approved supplier list.
     run.add_argument("--suppliers", type=Path, default=DEFAULT_SUPPLIERS, help="Supplier TOML (default: project suppliers.toml).")
     # CBOM output path.

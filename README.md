@@ -20,7 +20,13 @@ BOM ──▶ split by category ──▶ worker per category (parallel) ──�
 
 ```
 sourcing run examples/bom.csv --out cbom.csv
+sourcing run my_bom.xlsx --out cbom.csv
 ```
+
+| BOM input | Detail |
+| --- | --- |
+| CSV | [`examples/bom.csv`](examples/bom.csv) |
+| Excel | Copy [`templates/bom_template.xlsx`](templates/bom_template.xlsx), fill the `BOM` sheet |
 
 | Flag | Effect |
 | --- | --- |
@@ -58,4 +64,5 @@ Rows reused from the cache cost $0. Opus 5.5 is ~1.8× these figures.
 | Orchestrator | ✅ `src/sourcing_agent/orchestrator.py` |
 | CLI | ✅ `src/sourcing_agent/cli.py` |
 | Claude Code skill | ✅ `skill/source-bom/SKILL.md` |
+| Excel BOM input + template | ✅ `templates/bom_template.xlsx` |
 | Live run | ⏳ needs `ANTHROPIC_API_KEY` |

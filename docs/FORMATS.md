@@ -1,10 +1,17 @@
 # Formats
 
 ```
-bom.csv + suppliers.toml ──▶ sourcing agent ──▶ cbom.csv
+bom.csv / bom.xlsx + suppliers.toml ──▶ sourcing agent ──▶ cbom.csv
 ```
 
-## BOM input (`bom.csv`)
+## BOM input (`bom.csv` or `bom.xlsx`)
+
+| File | Read from |
+| --- | --- |
+| `.csv` | Header row, then one row per part |
+| `.xlsx` / `.xlsm` | Sheet `BOM` (else first sheet); row 1 = headers; blank rows skipped |
+
+Template: [`templates/bom_template.xlsx`](../templates/bom_template.xlsx) — category dropdown, quantity check, instructions sheet. Rebuild after changing categories: `python templates/make_bom_template.py`.
 
 | Column | Required | Example |
 | --- | --- | --- |
@@ -16,7 +23,7 @@ bom.csv + suppliers.toml ──▶ sourcing agent ──▶ cbom.csv
 | `mfr_part_number` | | `608-2Z` |
 | `notes` | | |
 
-Example: [`examples/bom.csv`](../examples/bom.csv)
+CSV example: [`examples/bom.csv`](../examples/bom.csv)
 
 ## Approved suppliers (`suppliers.toml`)
 
