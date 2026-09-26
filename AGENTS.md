@@ -18,6 +18,8 @@ Takes a BOM, sources each category from approved suppliers, and returns a CBOM (
 | Token use | 2 rows per worker, 15K-token page cap, prompt caching, usage + cost per run |
 | Shared cache prefix | Tools + system + category instructions byte-identical per category, cache breakpoint before the per-batch rows |
 | Supplier pruning | `sourcing suppliers <cbom>…` flags suppliers with 0 wins over ≥5 sourced rows in a category; user picks drops; Claude edits `suppliers.toml` |
+| Supplier discovery | Separate ability (`/find-suppliers`, `sourcing discover`): one open-web scout per category with unsourced rows; proposals only ([docs/DISCOVERY.md](docs/DISCOVERY.md)) |
+| Supplier verification | Free screen (own-domain priced evidence, HTTPS, login-free prices, ships to US, RDAP age) → trial on real CBOM rows → user approval (`sourcing candidates --approve`) |
 | Run mode | Batch API by default (50% off); `--live` for full-price fast runs |
 | Run gate | Skill asks mode, Opus retries, quote freshness, output path (with estimates), then a final Run / Cancel confirmation |
 | Cost estimate | `sourcing estimate` before each run: rows, cache hits, suppliers per category, mode, model; no API calls |

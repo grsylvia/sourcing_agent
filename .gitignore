@@ -10,3 +10,5 @@ __pycache__/
 quote_cache.json
 # Local actual-vs-estimated cost log (grows with each run).
 run_log.jsonl
+# Local registry of discovered suppliers (grows with each discovery).
+supplier_candidates.json

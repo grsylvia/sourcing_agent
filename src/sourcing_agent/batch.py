@@ -8,8 +8,11 @@ import logging
 # Async Claude client.
 import anthropic
 
+# Any worker's parsed result.
+from typing import Any
+
 # Worker job helpers shared with live mode.
-from .worker import Job, PartQuotes, Usage, WorkerError, handle_response, request_params
+from .worker import Job, Usage, WorkerError, handle_response, request_params
 
 # Seconds between batch status checks.
 POLL_SECONDS = 30
@@ -35,10 +38,10 @@ async def _wait(client: anthropic.AsyncAnthropic, batch_id: str) -> None:
         await asyncio.sleep(POLL_SECONDS)
 
 
-async def run_jobs(client: anthropic.AsyncAnthropic, jobs: list[Job], usage: Usage) -> list[list[PartQuotes] | str]:
-    """Run every job to completion in batch rounds; return quotes or an error message per job."""
+async def run_jobs(client: anthropic.AsyncAnthropic, jobs: list[Job], usage: Usage) -> list[Any | str]:
+    """Run every job to completion in batch rounds; return its parsed submission or an error message per job."""
     # Result per job index.
-    results: dict[int, list[PartQuotes] | str] = {}
+    results: dict[int, Any | str] = {}
     # Jobs still needing a turn.
     pending = dict(enumerate(jobs))
     # Round counter for log lines and request IDs.

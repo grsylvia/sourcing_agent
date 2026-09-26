@@ -4,8 +4,15 @@ BOM in → CBOM out (BOM + vendor + pricing), sourced from approved suppliers.
 
 ```
 BOM ──▶ split by category ──▶ worker per category (parallel) ──▶ lowest price ──▶ CBOM
-                                 └─ web search: approved suppliers only
+                                 └─ web search: approved suppliers only              │ not_found rows
+                                                                                     ▼
+suppliers.toml ◀── you approve ◀── trial on real rows ◀── free screen ◀── scout per category (open web)
 ```
+
+| Ability | Skill | Commands |
+| --- | --- | --- |
+| BOM → CBOM | `/source-bom` | `estimate`, `run`, `suppliers` |
+| Find and verify suppliers | `/find-suppliers` | `discover`, `trial`, `candidates` ([docs/DISCOVERY.md](docs/DISCOVERY.md)) |
 
 ## Setup
 
@@ -23,6 +30,10 @@ sourcing estimate my_bom.xlsx            # price batch vs live first (no API cal
 sourcing run my_bom.xlsx --out cbom.csv  # batch (default)
 sourcing run my_bom.xlsx --live          # live
 sourcing suppliers cbom.csv              # supplier win rates; flags suppliers that never win
+sourcing discover cbom.csv --estimate    # plan + cost of scouting categories with unsourced rows
+sourcing discover cbom.csv               # scout, screen, save candidates
+sourcing trial vxb.com --cbom cbom.csv   # quote sample rows on one candidate only
+sourcing candidates --approve vxb.com    # add a trialed candidate to suppliers.toml
 ```
 
 | BOM input | Detail |
@@ -42,10 +53,11 @@ sourcing suppliers cbom.csv              # supplier win rates; flags suppliers t
 | `cbom.csv` | BOM + vendor + pricing ([docs/FORMATS.md](docs/FORMATS.md)) |
 | `quote_cache.json` | Reused quotes (local, gitignored) |
 | `run_log.jsonl` | Actual vs estimated cost per pass, for calibration (local, gitignored) |
+| `supplier_candidates.json` | Discovered suppliers, screening, trials, status (local, gitignored) |
 | Summary | Rows by status, cache reuse, parts total, tokens and cost per model |
 | Exit code | `0` ok · `1` some rows errored · `2` bad input or credentials |
 
-In Claude Code: `/source-bom` (linked from `skill/source-bom/` into `~/.claude/skills/`).
+In Claude Code: `/source-bom` and `/find-suppliers` (each linked from `skill/<name>/` into `~/.claude/skills/`).
 
 ## Estimated cost
 
@@ -100,4 +112,5 @@ Passes with errored rows are logged but not fitted. Estimates are recomputed fro
 | Cost estimate + Opus 5.5 escalation | ✅ `src/sourcing_agent/estimate.py` |
 | Shared per-category cache prefix | ✅ `src/sourcing_agent/worker.py` |
 | Supplier win rates / pruning | ✅ `src/sourcing_agent/wins.py` |
+| Supplier discovery, screening, trials | ✅ `src/sourcing_agent/discover.py` (tested offline; no live scout yet) |
 | Live run | ⏳ needs `ANTHROPIC_API_KEY` |

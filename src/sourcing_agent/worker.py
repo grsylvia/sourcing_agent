@@ -2,6 +2,8 @@
 
 # Parse quote URLs to check their host against approved domains.
 from urllib.parse import urlparse
+# Per-job submission parsers.
+from typing import Any, Callable
 # Typed records for quotes returned to the orchestrator.
 from dataclasses import dataclass, field
 # Serialize BOM rows into the prompt.
@@ -143,6 +145,12 @@ class Job:
     turns: int = 0
     # Model that runs this conversation.
     model: str = MODEL
+    # Standing instructions for this kind of worker.
+    system: str = SYSTEM_PROMPT
+    # Client tool the worker calls with its final result.
+    submit_tool: str = SUBMIT_TOOL
+    # Turns the submission into a result; None means sourcing quotes (parse_submission).
+    parse: Callable[[dict], Any] | None = None
 
 
 def category_suppliers(category: str, suppliers: list[dict]) -> list[dict]:
@@ -352,7 +360,7 @@ def request_params(job: Job) -> dict:
     return {
         "model": job.model,
         "max_tokens": MAX_TOKENS,
-        "system": SYSTEM_PROMPT,
+        "system": job.system,
         "thinking": {"type": "adaptive"},
         "output_config": {"effort": EFFORT},
         "tools": job.tools,
@@ -361,8 +369,8 @@ def request_params(job: Job) -> dict:
     }
 
 
-def handle_response(job: Job, response, usage: Usage) -> list[PartQuotes] | None:
-    """Process one response: return quotes when submitted, None when another turn is needed."""
+def handle_response(job: Job, response, usage: Usage) -> Any | None:
+    """Process one response: return the parsed submission, or None when another turn is needed."""
     # Count this turn.
     job.turns += 1
     # Add this request to the usage totals.
@@ -382,10 +390,10 @@ def handle_response(job: Job, response, usage: Usage) -> list[PartQuotes] | None
     if response.stop_reason == "max_tokens":
         raise WorkerError(f"{job.category}: hit max_tokens ({response.id})")
     # Look for the final submission.
-    submission = next((b for b in response.content if b.type == "tool_use" and b.name == SUBMIT_TOOL), None)
-    # Validate and return the submitted quotes.
+    submission = next((b for b in response.content if b.type == "tool_use" and b.name == job.submit_tool), None)
+    # Validate and return the submission with the job's parser.
     if submission is not None:
-        return parse_submission(submission.input, job.rows, job.suppliers)
+        return job.parse(submission.input) if job.parse else parse_submission(submission.input, job.rows, job.suppliers)
     # Out of turns without a submission.
     if job.turns >= MAX_TURNS:
         raise WorkerError(f"{job.category}: no submission after {MAX_TURNS} turns")
@@ -393,7 +401,7 @@ def handle_response(job: Job, response, usage: Usage) -> list[PartQuotes] | None
     job.messages.append({"role": "assistant", "content": [b.to_dict() for b in response.content]})
     # Finished without submitting (not paused): ask for the submission.
     if response.stop_reason != "pause_turn":
-        job.messages.append({"role": "user", "content": f"Call {SUBMIT_TOOL} now with everything you found."})
+        job.messages.append({"role": "user", "content": f"Call {job.submit_tool} now with everything you found."})
     # Another turn is needed.
     return None
 
@@ -410,8 +418,12 @@ async def source_category(
     """Live mode: run one worker conversation to completion and return validated quotes."""
     # Local totals when the caller does not pass an accumulator.
     usage = usage if usage is not None else Usage()
-    # Conversation state.
-    job = new_job(category, rows, suppliers, currency, model)
+    # Run the sourcing conversation.
+    return await run_live(client, new_job(category, rows, suppliers, currency, model), usage)
+
+
+async def run_live(client: anthropic.AsyncAnthropic, job: Job, usage: Usage) -> Any:
+    """Live mode: run any worker conversation to completion and return its parsed submission."""
     # Loop until the worker submits (handle_response raises when out of turns).
     while True:
         # One streamed Messages API request.
