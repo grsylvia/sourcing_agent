@@ -32,8 +32,8 @@ def trial_supplier(domain: str, entry: dict) -> dict:
     return {"name": entry["name"], "domains": [domain], "categories": entry["categories"]}
 
 
-async def run_trial(client: anthropic.AsyncAnthropic, sample: list[dict], supplier: dict, currency: str, live: bool, usage: Usage) -> tuple[dict[str, PartQuotes], dict[str, str]]:
-    """Source the sample rows on the candidate's domain only, with the normal sourcing worker."""
+async def run_trial(client: anthropic.AsyncAnthropic, sample: list[dict], supplier: dict, currency: str, live: bool, usage: Usage) -> tuple[dict[str, PartQuotes], dict[str, str], list[dict]]:
+    """Source the sample rows on the candidate's domain only, with the normal sourcing worker; return quotes, errors, and conversation records."""
     # BOM columns only.
     bom_rows = [{c: r.get(c, "") for c in BOM_COLUMNS} for r in sample]
     # Normal sourcing pass with a one-supplier list.

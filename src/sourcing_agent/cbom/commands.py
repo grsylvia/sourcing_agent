@@ -12,9 +12,9 @@ from ..core.agent import ESCALATION_MODEL, MODEL
 # Cost model.
 from ..core.pricing import Range, estimate_cost, money
 # Fitted line and its description.
-from ..learning.regression import Fit, describe_fit
-# Estimate, calibration, and pass logging.
-from .estimate import Estimate, calibrate_sourcing, estimate_bom, log_pass
+from ..learning.regression import describe_fit
+# Estimate, learned state, and pass logging.
+from .estimate import Estimate, Learned, estimate_bom, learned, log_pass
 # Whole-run pipeline.
 from .pipeline import RunSummary, run_sourcing
 
@@ -58,12 +58,14 @@ def cmd_run(args) -> int:
     """Source the BOM, write the CBOM, and print the summary."""
     # Default output next to the BOM.
     out = args.out or args.bom.with_name(f"{args.bom.stem}_cbom.csv")
+    # What learning knew before this run (its estimates are what this run is judged against).
+    state = learned(paths.RUN_LOG_PATH)
     # Run the whole pipeline.
     summary = asyncio.run(run_sourcing(args.bom, args.suppliers, out, paths.CACHE_PATH, args.max_age, args.live, not args.no_escalate))
     # Summary lines.
     print_run(summary, out)
-    # Compare with the estimate and log for calibration.
-    report_passes(summary, args.bom, calibrate_sourcing(paths.RUN_LOG_PATH))
+    # Compare with the estimate and log for learning.
+    report_passes(summary, args.bom, state)
     # Non-zero exit when any row errored.
     return 1 if any(r["status"] == "error" for r in summary.rows) else 0
 
@@ -100,10 +102,12 @@ def print_estimate(e: Estimate) -> None:
 
 
 def print_calibration(e: Estimate) -> None:
-    """Print estimates corrected by the line fitted to logged actual costs."""
+    """Print where the token profile comes from and estimates corrected by the calibration fit."""
+    # Token profile source.
+    print(f"Token profile: {e.profile_note}. Details: sourcing learn")
     # No clean runs logged yet.
     if e.calibration is None:
-        print("Calibration: no logged runs yet; ranges use assumed token sizes (src/sourcing_agent/cbom/estimate.py).")
+        print("Calibration: no clean logged passes yet.")
         return
     # Shorthand for the fit.
     fit = e.calibration
@@ -138,17 +142,17 @@ def print_run(summary: RunSummary, out: Path) -> None:
     print(f"Estimated API cost ({'batch' if summary.batch else 'live'}, list price): ${cost + esc_cost:.2f} ({MODEL} ${cost:.2f} + {ESCALATION_MODEL} ${esc_cost:.2f})")
 
 
-def report_passes(summary: RunSummary, bom: Path, fit: Fit | None) -> None:
-    """Log each pass of a run for calibration and print its actual-vs-estimate line."""
+def report_passes(summary: RunSummary, bom: Path, state: Learned) -> None:
+    """Log each pass of a run (with its conversations) for learning and print its actual-vs-estimate line."""
     # First pass and escalation pass.
     passes = [
-        ("first", MODEL, summary.first_shape, summary.first_errors, summary.usage),
-        ("escalation", ESCALATION_MODEL, summary.escalation_shape, summary.escalation_errors, summary.escalation_usage),
+        ("first", MODEL, summary.first_shape, summary.first_errors, summary.usage, summary.first_conversations),
+        ("escalation", ESCALATION_MODEL, summary.escalation_shape, summary.escalation_errors, summary.escalation_usage, summary.escalation_conversations),
     ]
-    for name, model, shape, error_rows, usage in passes:
+    for name, model, shape, error_rows, usage, conversations in passes:
         # Log the pass; print its line when it made requests.
-        line = log_pass(paths.RUN_LOG_PATH, name, model, shape, error_rows, usage, summary.batch, bom.name, fit)
+        line = log_pass(paths.RUN_LOG_PATH, state, name, model, summary.batch, shape, error_rows, usage, bom.name, conversations)
         if line:
             print(line)
     # Where the data went.
-    print(f"Logged to {paths.RUN_LOG_PATH.name}; the next estimate refits on it.")
+    print(f"Logged to {paths.RUN_LOG_PATH.name}; the next estimate learns from it. Report: sourcing learn")

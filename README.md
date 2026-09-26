@@ -34,6 +34,7 @@ sourcing discover cbom.csv --estimate    # plan + cost of scouting categories wi
 sourcing discover cbom.csv               # scout, screen, save candidates
 sourcing trial vxb.com --cbom cbom.csv   # quote sample rows on one candidate only
 sourcing candidates --approve vxb.com    # add a trialed candidate to suppliers.toml
+sourcing learn                           # what logged runs teach: spend by meter/category/settings, learned token profile, next steps
 ```
 
 | BOM input | Detail |
@@ -115,9 +116,11 @@ src/sourcing_agent/
 | | `runner.py` | Runs jobs live (4 at a time) or through the Batch API |
 | | `config.py` · `paths.py` · `errors.py` · `web.py` | `suppliers.toml`, project files, errors, domain helpers |
 | | `pricing.py` | API cost model, cost ranges, shared token-size assumptions |
-| `learning` | `runlog.py` | Every API pass: shape, usage by meter, estimate, actual cost (training data) |
+| `learning` | `runlog.py` | Every API pass and its conversations: settings tag, usage by meter, turns, rows quoted, estimate, actual cost |
+| | `profile.py` | Token profile learned from conversations (p25–p90), per model, replacing guessed constants at ≥5 conversations |
 | | `regression.py` | Estimated-vs-actual least-squares fit |
 | | `calibration.py` | Corrects estimates with the fit (estimator injected by the worker); per-pass comparison |
+| | `report.py` · `commands.py` | `sourcing learn`: spend by settings, meter, category, conversation; recommendations |
 | `cbom` | `bom.py` | BOM (CSV/.xlsx) in, CBOM out, CBOMs read back |
 | | `quotes.py` | Quote records and the lowest-total price rule |
 | | `worker.py` | Sourcing worker (approved domains only) |
@@ -130,5 +133,6 @@ src/sourcing_agent/
 
 | Status | State |
 | --- | --- |
-| CBOM generation | ✅ first live run (Arctos, 76 rows) in progress |
+| CBOM generation | ✅ first live run: Arctos 76 rows, 56 sourced, $37.36 API (live) |
+| Learning | ✅ conversation logging, settings tags, learned profile, `sourcing learn` (tested offline) |
 | Supplier discovery | ✅ tested offline; no live scout yet |

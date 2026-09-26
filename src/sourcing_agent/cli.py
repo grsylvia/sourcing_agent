@@ -1,4 +1,4 @@
-"""Command line: `sourcing <command>`; CBOM commands from cbom/, supplier commands from suppliers/."""
+"""Command line: `sourcing <command>`; CBOM commands from cbom/, supplier commands from suppliers/, `learn` from learning/."""
 
 # Argument parsing.
 import argparse
@@ -12,8 +12,12 @@ import anthropic
 
 # CBOM commands (run, estimate).
 from .cbom import commands as cbom_commands
+# Sourcing estimator and assumed token profile, handed to learning.
+from .cbom.estimate import ASSUMED, sourcing_estimator
 # Error for bad input or a refused action.
 from .core.errors import InputError
+# Learning command (learn).
+from .learning import commands as learning_commands
 # Supplier commands (suppliers, discover, trial, candidates).
 from .suppliers import commands as supplier_commands
 
@@ -26,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     cbom_commands.register(commands)
     supplier_commands.register(commands)
+    learning_commands.register(commands, sourcing_estimator, ASSUMED)
     # Parse the command line.
     args = parser.parse_args(argv)
     # Warnings only from other libraries, on stderr.

@@ -1,7 +1,9 @@
-"""Run log (run_log.jsonl): one record per API pass (shape, usage, estimate, actual cost); the training data for learning."""
+"""Run log (run_log.jsonl): one record per API pass (settings, shape, usage, estimate, actual cost, outcomes) with one entry per conversation; the training data for learning."""
 
 # Record dates.
 import datetime
+# Settings IDs.
+import hashlib
 # Log format.
 import json
 # Usage to a dict.
@@ -9,10 +11,24 @@ from dataclasses import asdict
 # File paths.
 from pathlib import Path
 
-# Usage totals.
-from ..core.agent import Usage
+# Job and usage totals.
+from ..core.agent import Job, Usage
 # Cost model.
 from ..core.pricing import Range, estimate_cost
+
+
+def settings_id(settings: dict) -> str:
+    """Short stable ID for a settings dict, ignoring model and mode (reported separately)."""
+    # Settings that define the worker's behavior.
+    core = {k: v for k, v in settings.items() if k not in ("model", "batch")}
+    # First 8 hex digits of the hash.
+    return hashlib.sha256(json.dumps(core, sort_keys=True).encode()).hexdigest()[:8]
+
+
+def conversation_record(job: Job, outcome: str, quoted_rows: int) -> dict:
+    """One conversation's facts, usage, and outcome for the log."""
+    # Job facts (category, rows, suppliers) plus what happened.
+    return {"label": job.label, **job.meta, "turns": job.turns, "outcome": outcome, "quoted_rows": quoted_rows, "usage": asdict(job.usage)}
 
 
 def append_run(path: Path, record: dict) -> None:
@@ -50,13 +66,17 @@ def record_pass(
     error_rows: int,
     usage: Usage,
     estimate: Range,
+    settings: dict | None = None,
+    conversations: list[dict] | None = None,
 ) -> float | None:
-    """Append one pass with its estimate and actual cost; return the actual cost, or None if it made no requests."""
+    """Append one pass with its estimate, actual cost, settings, and conversations; return the actual cost, or None if it made no requests."""
     # Passes that made no requests teach nothing.
     if not usage.requests:
         return None
     # Actual list-price cost of the pass.
     actual = estimate_cost(usage, model, batch)
+    # Conversations logged for this pass.
+    conversations = conversations or []
     # One log record per pass.
     append_run(path, {
         "date": datetime.date.today().isoformat(),
@@ -71,6 +91,10 @@ def record_pass(
         "estimate_high": round(estimate.high, 4),
         "actual_cost": round(actual, 4),
         "usage": asdict(usage),
+        "settings": settings or {},
+        "settings_id": settings_id(settings) if settings else "",
+        "quoted_rows": sum(c["quoted_rows"] for c in conversations) if conversations else None,
+        "conversations": conversations,
     })
     # Actual cost for the caller's report.
     return actual

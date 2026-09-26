@@ -1,7 +1,7 @@
 """Agent loop shared by every worker: one Messages API conversation that ends when the worker calls its submit tool."""
 
 # Typed conversation state and usage totals.
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 # Per-request usage lines.
 import logging
 # Per-job submission parsers.
@@ -85,6 +85,10 @@ class Job:
     model: str = MODEL
     # Requests answered so far.
     turns: int = 0
+    # This conversation's own usage (the pass total is kept separately).
+    usage: Usage = field(default_factory=Usage)
+    # Facts about the job for the learning log (e.g. category, rows, suppliers).
+    meta: dict = field(default_factory=dict)
 
 
 def request_params(job: Job) -> dict:
@@ -106,8 +110,9 @@ def handle_response(job: Job, response, usage: Usage) -> Any | None:
     """Process one response: return the parsed submission, or None when another turn is needed."""
     # Count this turn.
     job.turns += 1
-    # Add this request to the usage totals.
+    # Add this request to the pass totals and the conversation's own totals.
     usage.add(response.usage)
+    job.usage.add(response.usage)
     # Shorthand for this response's usage.
     u = response.usage
     # Log this request's usage.

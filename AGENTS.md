@@ -9,6 +9,8 @@ Takes a BOM, sources each category from approved suppliers, and returns a CBOM (
 | Runtime | Local Python on the Claude Messages API (`anthropic` SDK) |
 | Code layout | `core/` shared engine, `learning/` run-by-run learning, `cbom/` CBOM generation, `suppliers/` supplier management; imports flow `suppliers → cbom → learning → core` only |
 | Learning goal | `learning/` exists for token minimization and cost optimization; it learns from every logged API pass |
+| Learning data | Each pass logs its settings (ID + prompt hash) and one record per conversation (usage by meter, turns, rows quoted); older totals-only records stay usable |
+| Token profile | Estimator uses a profile learned per model from ≥5 conversations (p25–p90), else pooled, else the assumed constants |
 | Fan-out | Code splits the BOM by category; one worker per category, run in parallel |
 | Supplier lock | Worker web search/fetch restricted to approved supplier domains (`allowed_domains`) |
 | Vendor selection | Workers return quotes; code picks the lowest price |

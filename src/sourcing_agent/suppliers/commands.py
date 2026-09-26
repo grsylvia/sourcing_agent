@@ -27,7 +27,7 @@ from ..core.runner import run_jobs
 # CBOM reader.
 from ..cbom.bom import read_cboms
 # Sourcing-pass estimate, calibration, and logging (trials use the sourcing worker).
-from ..cbom.estimate import calibrate_sourcing, log_pass, shape_range
+from ..cbom.estimate import learned, log_pass
 # Conversation shapes.
 from ..cbom.pipeline import pass_shape
 # Candidate registry.
@@ -197,7 +197,7 @@ def print_candidates(candidates: list[Candidate]) -> None:
         print(f"- {c.domain}: {c.reason}")
 
 
-async def run_trial_pass(sample: list[dict], supplier: dict, currency: str, live: bool, usage: Usage) -> tuple[dict, dict]:
+async def run_trial_pass(sample: list[dict], supplier: dict, currency: str, live: bool, usage: Usage) -> tuple[dict, dict, list[dict]]:
     """Run one trial with a fresh client."""
     # One client for the trial pass.
     async with anthropic.AsyncAnthropic() as client:
@@ -220,21 +220,21 @@ def cmd_trial(args) -> int:
         return 0
     supplier = trial_supplier(domain, entry)
     shape = pass_shape(sample, [supplier])
-    # Mode, estimate, and calibration.
+    # Mode, learned state, and estimate.
     batch = not args.live
-    est = shape_range(shape, MODEL, batch)
-    fit = calibrate_sourcing(paths.RUN_LOG_PATH)
+    state = learned(paths.RUN_LOG_PATH)
+    est = state.estimator(shape, MODEL, batch)
     gaps = sum(r.get("status") != "sourced" for r in sample)
     # Plan.
     print(f"Trial of {entry['name']} ({domain}) on {len(sample)} rows ({gaps} unsourced, {len(sample) - gaps} sourced for a price check)")
-    calibrated = f", calibrated ${fit.predict(est.mid):.2f}" if fit else ""
+    calibrated = f", calibrated ${state.fit.predict(est.mid):.2f}" if state.fit else ""
     print(f"Estimated cost ({'batch' if batch else 'live'}): {money(est)}{calibrated}")
     # Estimate only.
     if args.estimate:
         return 0
     # Normal sourcing pass on the candidate's domain only.
     usage = Usage()
-    parts, errors = asyncio.run(run_trial_pass(sample, supplier, config["currency"], args.live, usage))
+    parts, errors, conversations = asyncio.run(run_trial_pass(sample, supplier, config["currency"], args.live, usage))
     # Row-by-row comparison with the CBOM.
     outcomes = compare_trial(sample, parts, errors)
     print(f"\n{'Part':<10}{'Outcome':<11}{'Trial':>10}{'Current':>10}  Current vendor / description")
@@ -245,8 +245,8 @@ def cmd_trial(args) -> int:
     # Trial totals.
     t = summarize_trial(outcomes)
     print(f"\nQuoted {t['quoted']}/{t['rows']} rows | gaps filled {t['fills']}/{t['gaps']} | cheaper on {t['cheaper']} rows (saves ${t['savings']:.2f})")
-    # Cost vs estimate, logged for calibration (same worker as sourcing).
-    line = log_pass(paths.RUN_LOG_PATH, "trial", MODEL, shape, len(errors), usage, batch, f"trial {domain}", fit)
+    # Cost vs estimate, logged for learning (same worker as sourcing).
+    line = log_pass(paths.RUN_LOG_PATH, state, "trial", MODEL, batch, shape, len(errors), usage, f"trial {domain}", conversations)
     if line:
         print(line)
     # Record the trial.

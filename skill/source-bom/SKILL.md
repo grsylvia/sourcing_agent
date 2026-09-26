@@ -53,6 +53,7 @@ Runs `~/sourcing_agent` (Claude Messages API). Each run spends API credits.
 | Rows retried on Opus 5.5 | `Usage (claude-opus-5-5, …)` line |
 | Run cost vs estimate | `Actual vs estimate` lines (per model: actual, assumed range, calibrated figure) |
 | Calibration | Pass logged to `run_log.jsonl`; the next estimate refits on it |
+| Learning | `sourcing learn` (free): relay its recommendations |
 | Rows to review | `not_found` / `error` rows and their `sourcing_notes` |
 
 7. **Prune suppliers.** Run `~/sourcing_agent/.venv/bin/sourcing suppliers <cbom.csv> [older CBOMs…]` (free). If it lists drop candidates, ask in one AskUserQuestion call (multiSelect) which to drop, noting that each saves ~1 search per future row and re-sources that category's cached quotes. For each chosen drop, remove the category from that supplier's `categories` in `~/sourcing_agent/suppliers.toml`; drop the whole `[[suppliers]]` entry only if no categories remain. If rows came back `not_found`, offer `/find-suppliers` for those categories.

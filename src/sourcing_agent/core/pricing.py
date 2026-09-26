@@ -38,25 +38,31 @@ PRICES = {
 }
 
 
-def estimate_cost(usage: Usage, model: str, batch: bool = False) -> float | None:
-    """Return the list-price cost of the usage in USD, or None for an unknown model."""
+def cost_by_meter(usage: Usage, model: str, batch: bool = False) -> dict[str, float] | None:
+    """Return the list-price cost of the usage in USD per meter, or None for an unknown model."""
     # Rates for this model.
     rates = PRICES.get(model)
     # Unknown models cannot be priced.
     if rates is None:
         return None
-    # Token cost across all four meters.
-    tokens = (
-        usage.input_tokens * rates.input
-        + usage.output_tokens * rates.output
-        + usage.cache_write_tokens * rates.cache_write
-        + usage.cache_read_tokens * rates.cache_read
-    ) / 1_000_000
     # Batch requests bill tokens at half price.
-    if batch:
-        tokens *= BATCH_DISCOUNT
-    # Tokens plus search fees.
-    return tokens + usage.web_searches * SEARCH_PRICE
+    scale = (BATCH_DISCOUNT if batch else 1.0) / 1_000_000
+    # One entry per meter; search fees are not discounted.
+    return {
+        "cache_read": usage.cache_read_tokens * rates.cache_read * scale,
+        "cache_write": usage.cache_write_tokens * rates.cache_write * scale,
+        "output": usage.output_tokens * rates.output * scale,
+        "input": usage.input_tokens * rates.input * scale,
+        "searches": usage.web_searches * SEARCH_PRICE,
+    }
+
+
+def estimate_cost(usage: Usage, model: str, batch: bool = False) -> float | None:
+    """Return the list-price cost of the usage in USD, or None for an unknown model."""
+    # Cost per meter.
+    meters = cost_by_meter(usage, model, batch)
+    # Sum of meters, or None for an unknown model.
+    return sum(meters.values()) if meters is not None else None
 
 
 # Cost range for an estimate.

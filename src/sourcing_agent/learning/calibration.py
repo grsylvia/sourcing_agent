@@ -28,10 +28,16 @@ def training_points(records: list[dict], estimator: Estimator) -> list[tuple[flo
     return [(estimator([tuple(c) for c in r["shape"]], r["model"], r["batch"]).mid, r["actual_cost"]) for r in clean_passes(records)]
 
 
+def fit_records(records: list[dict], estimator: Estimator) -> Fit | None:
+    """Fit already-loaded pass records; None before any clean pass."""
+    # Least-squares line over the training points.
+    return fit_line(training_points(records, estimator))
+
+
 def calibrate(log_path: Path, estimator: Estimator) -> Fit | None:
     """Fit the logged passes; None before any clean pass."""
-    # Least-squares line over the training points.
-    return fit_line(training_points(load_runs(log_path), estimator))
+    # Load, then fit.
+    return fit_records(load_runs(log_path), estimator)
 
 
 def compare_line(model: str, actual: float, estimate: Range, fit: Fit | None, error_rows: int) -> str:

@@ -12,22 +12,24 @@ from pathlib import Path
 # Async Claude client.
 import anthropic
 
-# Models and usage totals.
-from ..core.agent import ESCALATION_MODEL, MODEL, Usage
+# Models, loop settings, and usage totals.
+from ..core.agent import EFFORT, ESCALATION_MODEL, MAX_TURNS, MODEL, Usage
 # Supplier list and per-category suppliers.
 from ..core.config import category_suppliers, load_suppliers
 # Worker failure type.
 from ..core.errors import WorkerError
 # Live and batch runners.
 from ..core.runner import run_jobs
+# Per-conversation learning records.
+from ..learning.runlog import conversation_record
 # BOM and CBOM files.
 from .bom import CBOM_COLUMNS, load_bom, write_cbom
 # Quote cache helpers.
 from .cache import load_cache, lookup, quote_key, save_cache, store
 # Quote records and the price rule.
 from .quotes import PartQuotes, pick_lowest
-# Sourcing worker jobs.
-from .worker import new_job
+# Sourcing worker jobs and the settings they run with.
+from .worker import MAX_PAGE_TOKENS, SEARCHES_PER_PART, new_job, prompt_hash
 
 # BOM rows per worker conversation; small batches stop pages being re-read.
 ROWS_PER_WORKER = 2
@@ -55,6 +57,10 @@ class RunSummary:
     first_errors: int
     # Rows that errored in the escalation pass.
     escalation_errors: int
+    # Per-conversation records of the first pass.
+    first_conversations: list[dict]
+    # Per-conversation records of the escalation pass.
+    escalation_conversations: list[dict]
     # Currency of every price.
     currency: str
     # Rows answered from the quote cache.
@@ -83,6 +89,21 @@ def pass_shape(rows: list[dict], suppliers: list[dict]) -> list[tuple[int, int]]
     return [(len(batch), len(category_suppliers(category, suppliers))) for category, batch in make_batches(rows)]
 
 
+def sourcing_settings(model: str, batch: bool) -> dict:
+    """Settings a sourcing pass runs with, logged so learning can compare them."""
+    # Everything that changes how many tokens a conversation uses.
+    return {
+        "model": model,
+        "batch": batch,
+        "effort": EFFORT,
+        "max_turns": MAX_TURNS,
+        "rows_per_worker": ROWS_PER_WORKER,
+        "searches_per_part": SEARCHES_PER_PART,
+        "page_tokens": MAX_PAGE_TOKENS,
+        "prompt": prompt_hash(),
+    }
+
+
 def split_cached(rows: list[dict], config: dict, cache: dict, max_age_days: int, today: datetime.date) -> tuple[dict[str, PartQuotes], list[dict], dict[str, str]]:
     """Return reusable cached quotes by part ID, the rows still to source, and each row's cache key."""
     # Cache key per part ID.
@@ -100,8 +121,8 @@ async def source_rows(
     live: bool,
     model: str,
     usage: Usage,
-) -> tuple[dict[str, PartQuotes], dict[str, str]]:
-    """Source rows on one model with the config's suppliers; return quotes and error messages by part ID."""
+) -> tuple[dict[str, PartQuotes], dict[str, str], list[dict]]:
+    """Source rows on one model with the config's suppliers; return quotes and errors by part ID, and one learning record per conversation."""
     # Worker-sized batches by category.
     batches = make_batches(rows)
     # Outcome per batch: quotes, or an error message.
@@ -118,6 +139,12 @@ async def source_rows(
     # Run the jobs and put each result in its batch slot.
     for (i, _), result in zip(jobs, await run_jobs(client, [job for _, job in jobs], live, usage)):
         outcomes[i] = result
+    # One learning record per conversation that ran, with rows quoted as its outcome.
+    conversations = [
+        conversation_record(job, "error", 0) if isinstance(outcomes[i], str)
+        else conversation_record(job, "submitted", sum(bool(p.quotes) for p in outcomes[i]))
+        for i, job in jobs
+    ]
     # Quotes and errors by part ID.
     parts: dict[str, PartQuotes] = {}
     errors: dict[str, str] = {}
@@ -129,8 +156,8 @@ async def source_rows(
             continue
         # Quotes for each row in the batch.
         parts.update({part.part_id: part for part in outcome})
-    # Results for every row.
-    return parts, errors
+    # Results for every row, plus the conversation records.
+    return parts, errors, conversations
 
 
 def cbom_row(row: dict, part: PartQuotes | None, error: str | None, currency: str) -> dict:
@@ -188,12 +215,14 @@ async def source_bom(
     reused = len(parts)
     # Log the reuse count.
     log.info("reusing cached quotes for %d of %d rows", reused, len(rows))
-    # Fresh quotes and errors from this run.
+    # Fresh quotes, errors, and conversation records from this run.
     fresh: dict[str, PartQuotes] = {}
     errors: dict[str, str] = {}
+    first_convs: list[dict] = []
+    retry_convs: list[dict] = []
     # First pass on the default model.
     if todo:
-        fresh, errors = await source_rows(client, todo, config, live, MODEL, usage)
+        fresh, errors, first_convs = await source_rows(client, todo, config, live, MODEL, usage)
     # First-pass errors, before retries change them.
     first_errors = len(errors)
     # Escalation errors.
@@ -205,7 +234,7 @@ async def source_bom(
         # Announce the retry.
         log.info("retrying %d rows on %s", len(retry), ESCALATION_MODEL)
         # Second pass.
-        retried, retry_errors = await source_rows(client, retry, config, live, ESCALATION_MODEL, escalation_usage)
+        retried, retry_errors, retry_convs = await source_rows(client, retry, config, live, ESCALATION_MODEL, escalation_usage)
         # Merge each retried row.
         for r in retry:
             # Part ID of the retried row.
@@ -233,7 +262,7 @@ async def source_bom(
     return RunSummary(
         cbom, usage, escalation_usage, len(retry),
         pass_shape(todo, config["suppliers"]), pass_shape(retry, config["suppliers"]), first_errors, len(retry_errors),
-        config["currency"], reused, not live,
+        first_convs, retry_convs, config["currency"], reused, not live,
     )
 
 

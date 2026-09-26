@@ -1,5 +1,7 @@
 """Sourcing worker: quotes one batch of a BOM category from its approved suppliers (domain-locked web search)."""
 
+# Prompt fingerprint for the settings tag.
+import hashlib
 # Serialize BOM rows into the prompt.
 import json
 
@@ -113,6 +115,14 @@ def build_rows(rows: list[dict]) -> str:
     return f"BOM rows (JSON, one per line):\n{row_lines}"
 
 
+def prompt_hash() -> str:
+    """Fingerprint of the system prompt, instructions template, and submit schema; changes whenever the prompts do."""
+    # Template text with placeholders instead of per-batch values.
+    text = SYSTEM_PROMPT + build_instructions("{category}", [], "{currency}") + json.dumps(build_submit_tool(["{vendor}"]), sort_keys=True)
+    # First 8 hex digits.
+    return hashlib.sha256(text.encode()).hexdigest()[:8]
+
+
 def check_quote(q: dict, domains_by_vendor: dict[str, list[str]]) -> str | None:
     """Return a rejection reason for an invalid quote, or None if it is valid."""
     # Vendor must be one of this category's suppliers.
@@ -219,4 +229,5 @@ def new_job(category: str, rows: list[dict], suppliers: list[dict], currency: st
         submit_tool=SUBMIT_TOOL,
         parse=lambda tool_input: parse_submission(tool_input, rows, approved),
         model=model,
+        meta={"category": category, "rows": len(rows), "suppliers": len(approved)},
     )
